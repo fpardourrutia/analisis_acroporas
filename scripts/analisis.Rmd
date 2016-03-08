@@ -55,9 +55,12 @@ library("ggplot2")
 Para empezar, cargamos los datos y seleccionamos variables interesantes:
 
 ```{r, warning=FALSE, message=FALSE}
+
+dir_datos <- "/Users/GreatDragonian/Dropbox/corales_caribe/gh_analisis_acroporas/datos"
 # Shape con los resultados de la inferencia de cobertura de acrópora a cada
 # uno de los parches de muestreo (datos agregados por parche). Ver referencias/pdfs
-parches_sh <- readOGR(dsn="../datos/2014_parches_acropora", layer="2014_parches_acropora")
+parches_sh <- readOGR(dsn = paste0(dir_datos, "/2014_parches_acropora"),
+  layer="2014_parches_acropora")
 parches_fr <- parches_sh@data %>%
   mutate(
     id = 0:(nrow(parches_sh@data) - 1) %>%
@@ -84,7 +87,8 @@ glimpse(parches_fr)
 #View(parches_fr)
 
 # Shape con los arrecifes muestreados, casi no sirve de nada
-area_muestreada_sh <- readOGR(dsn="../datos/2014_area_muestreada", layer="2014_area_muestreada")
+area_muestreada_sh <- readOGR(dsn = paste0(dir_datos, "/2014_area_muestreada"),
+  layer = "2014_area_muestreada")
 area_muestreada_fr <- area_muestreada_sh@data %>%
   mutate(
     id = 0:(nrow(area_muestreada_sh@data) - 1) %>%
@@ -100,7 +104,8 @@ glimpse(area_muestreada_fr)
 
 # Shape con los puntos muestreados, casi no sirve porque sólo tiene las coordenadas,
 # por lo tanto, usaremos los datos agregados por parche.
-puntos_muestreo_sh <- readOGR(dsn="../datos/2014_puntos_muestreo", layer="2014_puntos_muestreo")
+puntos_muestreo_sh <- readOGR(dsn = paste0(dir_datos, "/2014_puntos_muestreo"),
+  layer = "2014_puntos_muestreo")
 puntos_muestreo_fr <- puntos_muestreo_sh %>%
   as.data.frame()
 glimpse(puntos_muestreo_fr)
