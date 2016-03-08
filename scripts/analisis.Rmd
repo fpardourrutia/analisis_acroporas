@@ -1,0 +1,194 @@
+---
+title: "Corales Lorenzo"
+author: "Mau, Fer"
+date: "11 de noviembre de 2015"
+output: html_document
+---
+
+##Panorama General
+
++ Se seleccionaron los parches donde es factible encontrar colonias de _Acropora sp._
+por medio de variables de PR (batimetría, etc) (por tanto, se espera que las
+variables ambientales observadas en este estudio estén restringidas en cuanto a
+su rango real), luego se exploraron dichos parches, y se seleccionaron los que en
+realidad tiene cubierta de acrópora para ser muestreados.
+
++ Por medio de sitios de 4m de radio, se muestreo el 10% de cada parche de _Acrópora_.
+
++ Por tanto, los sitios/polígonos muestreados no son representativos del arrecife
+en que se encuentran, sin embargo, componen en un muestreo estratificado de los
+parches con _Acrópora sp._ dentro de cada arrecife.
+
++ Primera idea: juntar los datos con puntos muestreados en a lo largo de todo el 
+arrecife para tener una muestra que de una idea más completa de la cobertura
+de _Acropora sp_ a lo largo de todos los arrecifes, es decir, obtener una muestra
+_representativa_ de la cobertura de _Acropora sp_ para cada arrecife. Con esta
+muestra y variables ambientales tratar de hacer un mapa de cobertura de _Acropora_
+para todos los arrecifes de puerto morelos.
+
++ Segunda idea: mapa de distribución potencial de _Acrópora_, para identificar
+sitios donde es factible sembrarla. Este mapa debería incluir variables como
+distancia a hoteles y drenajes, para mejorar las aplicaciones a conservación.
+
++ Tercera idea: Mau dice que para delimitar las áreas a muestrear, utilizaron
+los sitios que, de acuerdo a la información proporcionada por la CONABIO, presentan
+cobertura de coral. Éstos se inspeccionaron por Manta Tow para determinar los parches
+de acrópora. Con lo anterior, podríamos pensar que tenemos un mapa de la comunidad
+coralina con porcentajes de cobertura de _Acrópora_. Lo que interesa ahora es
+identificar qué variables ambientales están correlacionadas con dichos porcentajes
+de cobertura:
+    1. Hacer la segmentación que propuso Mau.
+    2. Para cada segmento, calcular su porcentaje de cobertura basándonos en el
+    mapa anterior.
+    3. Clasificar los segmentos por porcentajes de cobertura (vgr: 5 clases).
+    4. Perfilar variables ambientales por porcentaje, o hacer una red bayesiana
+
+
+```{r, message=FALSE}
+library("plyr")
+library("dplyr")
+library("tidyr")
+library("rgdal")
+library("ggplot2")
+```
+
+Para empezar, cargamos los datos y seleccionamos variables interesantes:
+
+```{r, warning=FALSE, message=FALSE}
+# Shape con los resultados de la inferencia de cobertura de acrópora a cada
+# uno de los parches de muestreo (datos agregados por parche). Ver referencias/pdfs
+parches_sh <- readOGR(dsn="../datos/2014_parches_acropora", layer="2014_parches_acropora")
+parches_fr <- parches_sh@data %>%
+  mutate(
+    id = 0:(nrow(parches_sh@data) - 1) %>%
+      as.character()
+  ) %>%
+  select(
+    id,
+    area = Area_m2,
+    arrecife = Reef,
+    zona = Zone,
+    profundidad_m = prof,
+    n_puntos = puntos,
+    n_colonias = colonias,
+    densidad_colonias = densidad,
+    cobertura = Acro_cober,
+    colonia_m_m2 = ColSz_m2,
+    mort_reciente = MortRec,
+    mort_anterior = MortAnt
+  ) %>%
+  mutate(
+    area_efectiva = area * cobertura / 100
+  )
+glimpse(parches_fr)
+#View(parches_fr)
+
+# Shape con los arrecifes muestreados, casi no sirve de nada
+area_muestreada_sh <- readOGR(dsn="../datos/2014_area_muestreada", layer="2014_area_muestreada")
+area_muestreada_fr <- area_muestreada_sh@data %>%
+  mutate(
+    id = 0:(nrow(area_muestreada_sh@data) - 1) %>%
+      as.character()
+  ) %>%
+  select(
+    id,
+    arrecife = Reef,
+    area = Area_m2
+  )
+glimpse(area_muestreada_fr)
+#View(area_muestreada_fr)
+
+# Shape con los puntos muestreados, casi no sirve porque sólo tiene las coordenadas,
+# por lo tanto, usaremos los datos agregados por parche.
+puntos_muestreo_sh <- readOGR(dsn="../datos/2014_puntos_muestreo", layer="2014_puntos_muestreo")
+puntos_muestreo_fr <- puntos_muestreo_sh %>%
+  as.data.frame()
+glimpse(puntos_muestreo_fr)
+#View(puntos_muestreo_fr)
+```
+
+##Análisis exploratorio
+
+Ya que seleccionamos los datos a utilizar, así como las variables de interés,
+conviene visualizar un poco los datos.
+
+```{r}
+parches_plot <- fortify(parches_sh) %>%
+  inner_join(parches_fr, by = "id")
+glimpse(parches_plot)
+
+# Ubicación geográfica de los parches etiquetados por arrecife.
+ggplot(data = parches_plot, aes(x = long, y = lat,
+  group = group, fill = arrecife)) +
+  geom_polygon()
+
+area_muestreada_plot <- fortify(area_muestreada_sh) %>%
+  inner_join(area_muestreada_fr, by = "id")
+glimpse(area_muestreada_plot)
+
+# Ubicación geográfica de los arrecifes¡
+ggplot(data = area_muestreada_plot, aes(x = long, y = lat,
+  group = group, fill = arrecife)) +
+  geom_polygon()
+
+## Evaluando el protocolo de Lorenzo
+
+# Revisando la estratificación que mencionó en su artículo
+ggplot(parches_fr, aes(x = area, y = n_puntos)) +
+  geom_point()
+
+# Area de los parches por arrecife
+ggplot(parches_fr, aes(x = arrecife, y = area)) +
+  geom_boxplot() +
+  geom_jitter()
+
+# Cobertura de los parches por arrecife
+ggplot(parches_fr, aes(x = arrecife, y = cobertura)) +
+  geom_boxplot() +
+  geom_jitter()
+
+# ggplot(data_frame_poligonos_cobertura_agregado, aes(x = lat, y = cobertura, colour = area))  +
+#   geom_point() +
+#   geom_smooth() +
+#   ylim(0, 100) + 
+#   facet_wrap(~arrecife)
+# 
+# ggplot(data_frame_poligonos_cobertura_agregado, aes(x = lat, y = cobertura)) +
+#   geom_point() +
+#   geom_smooth() +
+#   ylim(0, 100) + 
+#   facet_wrap(~arrecife)
+
+#densidad de colonias vs profundidad por zona:
+
+# ggplot(data = data_frame_poligonos_cobertura_agregado,
+#   aes(x = lat, y = area_efectiva, colour = arrecife, group = 1)) +
+#   geom_point() +
+#   geom_smooth()
+
+# Vamos a trabajar primero con area efectiva de cobertura, que es
+# area * % de cobertura.
+
+# Profundidad por cobertura y zona del arrecife, no se ve relación.
+ggplot(data = parches_fr, aes(x = profundidad_m, y = cobertura)) +
+  geom_point() +
+  facet_wrap(~zona) +
+  geom_smooth()
+
+# Plot de porcentajes de cobertura de cada parche, perfilados por arrecife
+ggplot(data = parches_fr, aes(x = arrecife, y = cobertura)) +
+  geom_boxplot() +
+  geom_jitter()
+# Se puede ver que se necesitan las dos cosas: porcentaje de cobertura y área del
+# parche, para empezar a jerarquizar los arrecifes por estado de conservación de acrópora.
+# El número de parches no es tan importante, puesto que lo que importa es el área cubierta.
+# Cuánto está cubierto, y lo que está cubierto, qué tan cubierto está.
+
+#Vamos a explicar "area_efectiva" con variables ambientales.
+
+#Probar superpixeles para relacionar los polígonos con los datos in situ,
+#disminuir el ruido aleatorio. A cada superpixel asociarle el valor de la variable
+#de salida de su parche correpondiente. Cuidado con la autocorrelación espacial.
+#Podríamos estar replicando datos.
+
+```
