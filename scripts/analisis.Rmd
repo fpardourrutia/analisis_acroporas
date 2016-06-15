@@ -41,26 +41,30 @@ de cobertura:
     2. Para cada segmento, calcular su porcentaje de cobertura basándonos en el
     mapa anterior.
     3. Clasificar los segmentos por porcentajes de cobertura (vgr: 5 clases).
-    4. Perfilar variables ambientales por porcentaje, o hacer una red bayesiana
-
+    4. Perfilar variables ambientales por porcentaje, o hacer una red bayesiana.
+  
++ Cuarta idea: Tomar el mapa de Lorenzo de porcentajes de cobertura de acrópora,
+categorizarlo y perfilar los pixeles individuales de acuerdo a su clase
+(supuesto: tomamos dicha clase como cierta)
 
 ```{r, message=FALSE}
+library("raster")
+library("rgdal")
+
 library("plyr")
 library("dplyr")
 library("tidyr")
-library("rgdal")
 library("ggplot2")
 ```
 
 Para empezar, cargamos los datos y seleccionamos variables interesantes:
 
 ```{r, warning=FALSE, message=FALSE}
-
-dir_datos <- "/Users/GreatDragonian/Dropbox/corales_caribe/gh_analisis_acroporas/datos"
+dir_datos <- "/Users/GreatDragonian/Dropbox/carpetas_compartidas/gh_analisis_acroporas/datos"
 # Shape con los resultados de la inferencia de cobertura de acrópora a cada
 # uno de los parches de muestreo (datos agregados por parche). Ver referencias/pdfs
-parches_sh <- readOGR(dsn = paste0(dir_datos, "/2014_parches_acropora"),
-  layer="2014_parches_acropora")
+parches_sh <- readOGR(dsn = paste0(dir_datos, "/2014_parches_acropora_ajustado"),
+  layer="2014_parches_acropora_ajustado")
 parches_fr <- parches_sh@data %>%
   mutate(
     id = 0:(nrow(parches_sh@data) - 1) %>%
@@ -84,7 +88,8 @@ parches_fr <- parches_sh@data %>%
     area_efectiva = area * cobertura / 100
   )
 glimpse(parches_fr)
-#View(parches_fr)
+
+parches_sh@data <- parches_fr
 
 # Shape con los arrecifes muestreados, casi no sirve de nada
 area_muestreada_sh <- readOGR(dsn = paste0(dir_datos, "/2014_area_muestreada"),
@@ -184,8 +189,8 @@ ggplot(data = parches_fr, aes(x = profundidad_m, y = cobertura)) +
 ggplot(data = parches_fr, aes(x = arrecife, y = cobertura)) +
   geom_boxplot() +
   geom_jitter()
-# Se puede ver que se necesitan las dos cosas: porcentaje de cobertura y área del
-# parche, para empezar a jerarquizar los arrecifes por estado de conservación de acrópora.
+# Se puede ver que se necesitan las dos cosas: porcentaje de cobertura y total de área de los
+# parches, para empezar a jerarquizar los arrecifes por estado de conservación de acrópora.
 # El número de parches no es tan importante, puesto que lo que importa es el área cubierta.
 # Cuánto está cubierto, y lo que está cubierto, qué tan cubierto está.
 
@@ -196,4 +201,178 @@ ggplot(data = parches_fr, aes(x = arrecife, y = cobertura)) +
 #de salida de su parche correpondiente. Cuidado con la autocorrelación espacial.
 #Podríamos estar replicando datos.
 
+# Zona arrecifal
+table(parches_fr$zona)
 ```
+
+## Perfilamiento de variables satelitales por porcentaje de cobertura de acrópora.
+
+
+Para el simposio de corales, lo que quedamos era:
+1. Hacer una segmentación del area de estudio por variables ambientales.
+2. Para cada segmento, extraer su porcentaje medio de cobertura de A.palmata,
+tomando la inferencia de Lorenzo de porcentajes de cobertura por parche (y no
+parche) como base. Juistificar que la variabilidad de porcentajes de cobertura
+por pixel, no considerada a la escala que trabajó Lorenzo, queda parcialmente
+controlada por ley de grandes números, ya que Lorenzo definió los parches, con
+porcentaje de cobertura de Acrópora más o menos homogéneo.
+3. Categorizar los porcentajes medios de cobertura de cada segmento.
+4. Perfilar las variables ambientales por categoría de cobertura.
+
+Mejor se implementará la idea 4, mencionada anteriormente.
+
+Primero que nada, se leen los rasters, y se hacen los ajustes necesarios para
+guardarlos en un solo stack:
+
+```{r, warning=FALSE, message=FALSE}
+
+# Creando un stack con los rasters de terminación tiff de batimetría:
+path_rasters_batimetria <- paste0(dir_datos, "/rasters/tiff/batimetria") %>%
+  list.files(., pattern = "\\.tif$") %>%
+  paste0(dir_datos, "/rasters/tiff/batimetria", "/", .)
+
+rasters_batimetria <- stack(path_rasters_batimetria)
+
+# Y también uno con las imagenes satelitales
+path_raster_satelital_2010 <- paste0(dir_datos, "/rasters/tiff/satelitales/",
+  "WV2_2010-12-20_Mexico_bref_geo_UTM16N.tif")
+stack_satelital_2010 <- stack(path_raster_satelital_2010)
+plot(stack_satelital_2010)
+
+path_raster_satelital_2011 <- paste0(dir_datos, "/rasters/tiff/satelitales/",
+  "WV2_2011-01-19_Mexico_bref_geo_UTM16N.tif")
+stack_satelital_2011 <- stack(path_raster_satelital_2011)
+plot(stack_satelital_2011)
+
+# Por facilidad, usaré el del 2010
+projection(stack_satelital_2010) == projection(rasters_batimetria)
+extent(stack_satelital_2010) == extent(rasters_batimetria)
+
+projection(stack_satelital_2011) == projection(rasters_batimetria)
+extent(stack_satelital_2011) == extent(rasters_batimetria)
+```
+
+
+Ahora se creará un raster con los shapes de Lorenzo, con la misma proyección y
+extensión que los rasters de batimetría:
+
+```{r, warning=FALSE, message=FALSE}
+
+## Obteniendo la proyección del shapefile de "parches":
+crs(parches_sh)
+
+## Y la de un raster de Lau:
+crs(rasters_batimetria)
+
+## Verificando que sean iguales:
+crs(parches_sh, asText = TRUE) == crs(rasters_batimetria, asText = TRUE)
+# TRUE
+
+## Convirtiendo a raster la variable de cobertura de acrópora. Como suponemos que
+## tenemos un mapa de cobertura de acrópora, suponemos que el background tiene
+## cobertura de 0
+cobertura_rt <- rasterize(parches_sh, rasters_batimetria, field = "cobertura",
+  background = NA)
+plot(cobertura_rt)
+
+## También usaremos el de zona arrecifal
+zona_rt <- rasterize(parches_sh, rasters_batimetria, field = "zona",
+  background = NA)
+
+# Revisando que todo esté bien
+names(rasters_batimetria)
+extent(rasters_batimetria) == extent(cobertura_rt)
+projection(rasters_batimetria) == projection(cobertura_rt)
+
+# Agregando los rasters producidos al stack "rasters", también aprovecharé para agregar
+# los stacks satelitales
+rasters <- addLayer(rasters_batimetria, c(cobertura_rt, zona_rt, stack_satelital_2010))
+rasters
+```
+
+Ahora se prepararán los datos para hacer el análisis exploratorio
+
+```{r, warning=FALSE, message=FALSE}
+# Convirtiendo a data_frame para trabajar (intenté hacer directamente los histogramas)
+# con rasterVis, pero salía un error raro. Preguntarle a Julián.
+#histogram(rasters$hillshade_batimetria_puertomorelosn_real)
+#histogram(~$hillshade_batimetria_puertomorelosn_real, data=rasters)
+
+datos_perfiles <- as.data.frame(rasters)
+glimpse(datos_perfiles)
+summary(datos_perfiles)
+
+datos_perfiles_rev <- datos_perfiles %>%
+  transmute(
+    id = 1:nrow(.),
+    aspecto = aspect_batimetria_puertomorelosn_real,
+    batimetria = batimetria_puertomorelosn_real,
+    pendiente = slope_batimetria_puertomorelosn_real,
+    cobertura = layer.1,
+    zona = layer.2,
+    banda_2010_1 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.1,
+    banda_2010_2 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.2,
+    banda_2010_3 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.3,
+    banda_2010_4 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.4,
+    banda_2010_5 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.5,
+    banda_2010_6 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.6,
+    banda_2010_7 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.7,
+    banda_2010_8 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.8
+  ) %>%
+  # filtrando los parches de acrópora para calcular las categorías sobre estos:
+  filter(!is.na(cobertura)) %>%
+  mutate(
+    cat_cobertura = cobertura %>%
+      cut(., quantile(., probs = seq(0, 1, 0.25)), include.lowest = TRUE)
+  )
+
+glimpse(datos_perfiles_rev)
+
+#revisando las categorías de cobertura:
+table(datos_perfiles_rev$cat_cobertura)
+```
+
+Y se plotearán los resultados
+
+```{r}
+
+# Categorías de porcentaje de cobertura contra batimetría
+ggplot(data = datos_perfiles_rev, aes(x = cat_cobertura, y = batimetria)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.02)
+
+# Categorías de porcentaje de cobertura contra aspecto (se ve una correlación).
+# Cuidado, podría ser también por el diseño muestral, revisar esto.
+
+ggplot(data = datos_perfiles_rev, aes(x = cat_cobertura, y = aspecto)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.02)
+
+ggplot(data = datos_perfiles_rev, aes(x = cobertura, y = aspecto)) +
+  geom_point(alpha = 0.02) +
+  geom_smooth()
+
+# Qué chido, tal vex tenga que ver con la zona arrecifal en la que se encuentran
+# vamos a plotear eso:
+
+ggplot(data = datos_perfiles_rev, aes(x = as.factor(zona), y = aspecto)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.02)
+# Parece que algo tiene que ver.
+
+# Porcentaje de cobertura contra pendiente
+
+ggplot(data = datos_perfiles_rev, aes(x = cat_cobertura, y = pendiente)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.02)
+
+# ploteando las bandas:
+llply(paste0("banda_2010_", 1:8),
+  function(nombre, datos){
+    ggplot(data = datos, aes_string(x = "cat_cobertura", y = nombre)) +
+      geom_boxplot() +
+      geom_jitter(alpha = 0.02)
+  }, datos = datos_perfiles_rev
+)
+```
+
