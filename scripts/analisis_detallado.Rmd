@@ -1,0 +1,226 @@
+---
+title: "Corales Lorenzo"
+author: "Mau, Fer"
+date: "11 de noviembre de 2015"
+output: html_document
+---
+
+##Panorama General
+
++ Se seleccionaron los parches donde es factible encontrar colonias de _Acropora sp._ por medio de variables de PR (batimetría, etc). Por lo tanto, se espera que
+las variables ambientales observadas en este estudio estén restringidas en cuanto
+a su rango real.
+
++ Luego se exploraron dichos parches, y se seleccionaron los que en realidad tiene cubierta de acrópora para ser muestreados. Éstos se digitalizaron.
+
++ Utilizando la digitalización de los parches, se obtuvo una muestra aleatoria de
+sitios a visitar. La cantidad de sitios (r = 4m) en cada parche se seleccionó de
+manera que cubrieran el 10% del mismo. De esta manera, todos los puntos deben caer
+exactamente en cada parche del shape (al menos teóricamente.)
+
++ Por tanto, los sitios/polígonos muestreados no son representativos del arrecife
+en que se encuentran, sin embargo, componen en un muestreo _estratificado_ de los
+parches con _Acrópora sp._ dentro de cada arrecife.
+
++ Se observa que los puntos de GPS muchas veces no se encuentran dentro del parche
+al que se refieren, y además se sabe que el GPS tiene un error (mayor en agua que
+en tierra), por lo que la primera cuestión a resolver es cómo asignar variables
+ambientales (de rasters con resolución espacial de 2m) a localizaciones
+geográficas aproximadas.
+
++ Considerar que también hay error humano.
+
+## Primera idea
+
+1. Sacar un búfer (ó ventana, más natural para rasters) de 5m (o 3px, experiencia
+de Mau) alrededor de cada punto del GPS, obtenemos los pixeles en la intersección
+de ese búfer con algún parche, y sacamos la mediana. Notar que automáticamente se excluyen los puntos donde el búfer no intersecta ningún parche. 
+
+2. Se elige la mediana porque es más robusta ante atípicos que la media, pero para
+saber esto con precisión, conviene hacer una simulación: círculos con radio 1m
+aparte, 2m aparte, etc, y qué porcentaje de los datos comparten.
+
+3. Hacer pruebas con un GPS en el mar, para saber el error de medición. Sacar el
+histograma de errores y obtener un tamaño de búfer apropiado.
+
+## Segunda idea:
+
+1. Segmentar la imagen y usar los superpixeles que coinciden con los puntos para
+agregar los pixeles individuales.
+
+Desventaja: no se está arreglando el error si el el punto realmente muestreado
+cayó en otro superpixel.
+
+## Tercera idea:
+
+1. Segmentar la imagen.
+
+2. Tomar un búfer más pequeño.
+
+3. Usar las medias de los superpixeles en cada búfer para obtener el valor de
+las variables ambientales que se van a asignar al pixel.
+
+Desventaja: como el búfer es pequeño, podría no haber intersección entre los puntos
+muestreados realmente y los del GPS (con errores).
+
+## Tareas:
+
+1. Mau: hacer las ventanas.
+
+2. Fer: empezar el exploratorio.
+
+```{r, message = FALSE}
+library("raster")
+library("rgdal")
+
+library("plyr")
+library("dplyr")
+library("tidyr")
+library("readr")
+library("ggplot2")
+library("purrr")
+```
+
+```{r, warning=FALSE, message=FALSE}
+
+# ../ es para regresarse una carpeta del working directory.
+dir_datos <- "../../datos_analisis_detallado/"
+
+# # Shape con la información desagregada por punto de muestreo
+# puntos_sh <- readOGR(dsn = paste0(dir_datos, "acropora_puntos"),
+#   layer="acropora_puntos")
+# 
+# puntos_fr <- puntos_sh@data %>%
+#   mutate(
+#     id = 0:(nrow(.) - 1) %>%
+#       as.character()
+#   ) %>%
+#   select(
+#     id,
+#     punto = Punto,
+#     parche = Parche,
+#     arrecife = Arrecife,
+#     latitud = Lat,
+#     longitud = Long,
+#     profundidad_media_m = Av_depth_m,
+#     cobertura_acropora = Acropora_c
+#   )
+# glimpse(puntos_fr)
+
+# Shape con buffers alrededor de cada punto de acróporas.
+buffer_sh <- readOGR(dsn = paste0(dir_datos, "acropora_puntos_buffer"))
+
+buffer_fr <- buffer_sh@data %>%
+  mutate(
+    id = 0:(nrow(.) - 1) %>%
+      as.character()
+  ) %>%
+  select(
+    id,
+    punto = Punto,
+    parche = Parche,
+    arrecife = Arrecife,
+    latitud = Lat,
+    longitud = Long,
+    profundidad_media_m = Av_depth_m,
+    cobertura_acropora = Acropora_c
+  )
+glimpse(buffer_fr)
+
+# # Leyendo raster con las reflectancias del 2010 y del 2011 de manera independiente (imagen satelital)
+# brick_reflectancias_2010 <- paste0(dir_datos, "reflectancias_2010/WV2_2010-12-20_Mexico_bref_geo_UTM16N.img") %>%
+#   brick()
+# brick_reflectancias_2011 <- paste0(dir_datos, "reflectancias_2011/WV2_2011-01-19_Mexico_bref_geo_UTM16N.img") %>%
+#   brick()
+# 
+# # Leyendo los otros rasters:
+# raster_batimetria <- paste0(dir_datos, "relieve/batimetria_real_pm_completa1.tif") %>%
+#   raster()
+# # pendiente: pendiente de máximo cambio de la batimetría
+# raster_pendiente <- paste0(dir_datos, "relieve/slope_pm1.tif") %>%
+#   raster()
+# # aspecto: ángulo del gradiente de la batimetría
+# raster_aspecto <- paste0(dir_datos, "relieve/aspect_pm.tif") %>%
+#   raster()
+# 
+# # Con el siguiente comando, revisando las proyecciones, podemos ver que todas son iguales.
+# #projection(raster_aspecto) == projection(raster_batimetria)
+# 
+# # Cortando los rasters del mismo tamaño para hacer un único ladrillo, para cada stack de reflectancias:
+# # Todo se reproyectará a la proyección de "raster_pendiente", que engloba a ambos pero es ligeramente menor
+# # en extensión que "raster_batimetria" (puesto que son pendientes calculadas.)
+# 
+# # La extensión de los stacks es la misma que la de "raster_pendiente"
+# brick_reflectancias_2010_corregido <- resample(brick_reflectancias_2010, raster_pendiente, "bilinear")
+# #extent(stack_reflectancias_2010_corregido) == extent(raster_pendiente)
+# 
+# brick_reflectancias_2011_corregido <- resample(brick_reflectancias_2011, raster_pendiente, "bilinear")
+# #extent(stack_reflectancias_2011_corregido) == extent(raster_pendiente)
+# 
+# # Recortando "raster_batimetria"
+# #projection(raster_batimetria) == projection(raster_pendiente)
+# raster_batimetria_recortado <- crop(raster_batimetria, raster_pendiente)
+# #extent(raster_batimetria_recortado) == extent(raster_pendiente)
+# 
+# # Recortando "raster_aspecto"
+# #projection(raster_aspecto) == projection(raster_pendiente)
+# raster_aspecto_recortado <- crop(raster_aspecto, raster_pendiente)
+# #extent(raster_aspecto_recortado) == extent(raster_pendiente)
+# 
+# # Creando un nuevo stack con las imágenes satelitales del 2010, del 2011 y productos de relieve homologados
+# brick_insumos <- list(
+#   subset(brick_reflectancias_2010_corregido, 1:4) %>%
+#     unstack(),
+#   subset(brick_reflectancias_2011_corregido, 1:4) %>%
+#     unstack(),
+#   list(
+#     raster_batimetria_recortado,
+#     raster_pendiente,
+#     raster_aspecto_recortado
+#     )
+#   ) %>%
+#   # Simplificar listas
+#   flatten() %>%
+#   brick()
+#writeRaster(brick_insumos, "../../productos/brick_insumos.tif")
+
+# Leyendo raster de insumos:
+brick_insumos_ <- brick("../../productos/brick_insumos.tif")
+quartz()
+plot(brick_insumos_)
+
+# Utilizar la intersección para homologar la imágenes del 2010 con la del 2011 sería un problema de regresión:
+# Si A es una matriz de pixeles por bandas (n x 4) para el 2010 y B lo mismo para el 2011, lo que se tendría
+# que hacer es encontrar una matriz C (4x$) tal que A + AC = B, o AC = B-A, ésto es un problema de regresión.
+
+# Shape con los arrecifes muestreados, casi no sirve de nada
+area_muestreada_sh <- readOGR(dsn = paste0(dir_datos, "/2014_area_muestreada"),
+  layer = "2014_area_muestreada")
+area_muestreada_fr <- area_muestreada_sh@data %>%
+  mutate(
+    id = 0:(nrow(area_muestreada_sh@data) - 1) %>%
+      as.character()
+  ) %>%
+  select(
+    id,
+    arrecife = Reef,
+    area = Area_m2
+  )
+glimpse(area_muestreada_fr)
+#View(area_muestreada_fr)
+
+# Shape con los puntos muestreados, casi no sirve porque sólo tiene las coordenadas,
+# por lo tanto, usaremos los datos agregados por parche.
+puntos_muestreo_sh <- readOGR(dsn = paste0(dir_datos, "/2014_puntos_muestreo"),
+  layer = "2014_puntos_muestreo")
+puntos_muestreo_fr <- puntos_muestreo_sh %>%
+  as.data.frame()
+glimpse(puntos_muestreo_fr)
+#View(puntos_muestreo_fr)
+```
+
+```
+
+
+
+
