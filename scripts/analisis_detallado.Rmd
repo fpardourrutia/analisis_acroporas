@@ -63,6 +63,13 @@ las variables ambientales que se van a asignar al pixel.
 Desventaja: como el búfer es pequeño, podría no haber intersección entre los puntos
 muestreados realmente y los del GPS (con errores).
 
+## Cuarta idea:
+
+1. Si una variable predice bien la distribución de Acrópora palmata, utilizando
+un modelo usual, no podemos descartar que se deba a autocorrelación espacial.
+
+2. 
+
 ## Tareas:
 
 1. Mau: hacer las ventanas.
@@ -71,7 +78,12 @@ muestreados realmente y los del GPS (con errores).
 
 ```{r, message = FALSE}
 library("raster")
+
+# Para leer shapes
 library("rgdal")
+
+# Para trabajar con shapes.
+#library("rgeos") # raster lo contiene
 
 library("plyr")
 library("dplyr")
@@ -79,53 +91,22 @@ library("tidyr")
 library("readr")
 library("ggplot2")
 library("purrr")
+library("stringi")
+
+# Para calcular medianas ponderadas
+library("matrixStats")
+
+# Para ajustar RandomForest
+library("randomForest")
+
+# Para hacer Validación Cruzada espacial
+library("sperrorest")
 ```
 
 ```{r, warning=FALSE, message=FALSE}
 
 # ../ es para regresarse una carpeta del working directory.
 dir_datos <- "../../datos_analisis_detallado/"
-
-# # Shape con la información desagregada por punto de muestreo
-# puntos_sh <- readOGR(dsn = paste0(dir_datos, "acropora_puntos"),
-#   layer="acropora_puntos")
-# 
-# puntos_fr <- puntos_sh@data %>%
-#   mutate(
-#     id = 0:(nrow(.) - 1) %>%
-#       as.character()
-#   ) %>%
-#   select(
-#     id,
-#     punto = Punto,
-#     parche = Parche,
-#     arrecife = Arrecife,
-#     latitud = Lat,
-#     longitud = Long,
-#     profundidad_media_m = Av_depth_m,
-#     cobertura_acropora = Acropora_c
-#   )
-# glimpse(puntos_fr)
-
-# Shape con buffers alrededor de cada punto de acróporas.
-buffer_sh <- readOGR(dsn = paste0(dir_datos, "acropora_puntos_buffer"))
-
-buffer_fr <- buffer_sh@data %>%
-  mutate(
-    id = 0:(nrow(.) - 1) %>%
-      as.character()
-  ) %>%
-  select(
-    id,
-    punto = Punto,
-    parche = Parche,
-    arrecife = Arrecife,
-    latitud = Lat,
-    longitud = Long,
-    profundidad_media_m = Av_depth_m,
-    cobertura_acropora = Acropora_c
-  )
-glimpse(buffer_fr)
 
 # # Leyendo raster con las reflectancias del 2010 y del 2011 de manera independiente (imagen satelital)
 # brick_reflectancias_2010 <- paste0(dir_datos, "reflectancias_2010/WV2_2010-12-20_Mexico_bref_geo_UTM16N.img") %>%
@@ -167,7 +148,8 @@ glimpse(buffer_fr)
 # raster_aspecto_recortado <- crop(raster_aspecto, raster_pendiente)
 # #extent(raster_aspecto_recortado) == extent(raster_pendiente)
 # 
-# # Creando un nuevo stack con las imágenes satelitales del 2010, del 2011 y productos de relieve homologados
+# # Creando un nuevo brick con las imágenes satelitales del 2010, del 2011 y productos de relieve homologados
+# # El brick almacena los datos de una manera más eficiente para el análisis que el stack.
 # brick_insumos <- list(
 #   subset(brick_reflectancias_2010_corregido, 1:4) %>%
 #     unstack(),
@@ -182,45 +164,617 @@ glimpse(buffer_fr)
 #   # Simplificar listas
 #   flatten() %>%
 #   brick()
-#writeRaster(brick_insumos, "../../productos/brick_insumos.tif")
+# 
+# # Arreglando los nombres de "brick_insumos"
+# names(brick_insumos) <- c(
+#   names(brick_reflectancias_2010_corregido)[1:4],
+#   names(brick_reflectancias_2011_corregido)[1:4],
+#   names(raster_batimetria_recortado),
+#   names(raster_pendiente),
+#   names(raster_aspecto_recortado)
+# )
+# 
+# writeRaster(brick_insumos, "../../productos/brick_insumos.tif")
+# 
+# # Los nombres no se escriben en el brick, entonces los guardamos por su cuenta
+# saveRDS(names(brick_insumos), "../../productos/names_brick_insumos.RData")
 
 # Leyendo raster de insumos:
-brick_insumos_ <- brick("../../productos/brick_insumos.tif")
+brick_insumos <- brick("../../productos/brick_insumos.tif")
+names_brick_insumos <- readRDS("../../productos/names_brick_insumos.RData")
+names(brick_insumos) <- names_brick_insumos
+
 quartz()
-plot(brick_insumos_)
+plot(brick_insumos)
 
 # Utilizar la intersección para homologar la imágenes del 2010 con la del 2011 sería un problema de regresión:
 # Si A es una matriz de pixeles por bandas (n x 4) para el 2010 y B lo mismo para el 2011, lo que se tendría
 # que hacer es encontrar una matriz C (4x$) tal que A + AC = B, o AC = B-A, ésto es un problema de regresión.
+```
 
-# Shape con los arrecifes muestreados, casi no sirve de nada
-area_muestreada_sh <- readOGR(dsn = paste0(dir_datos, "/2014_area_muestreada"),
-  layer = "2014_area_muestreada")
-area_muestreada_fr <- area_muestreada_sh@data %>%
+```{r, warning=FALSE, message=FALSE}
+
+# Shape con buffers alrededor de cada punto del GPS, correspondientes a un sitio
+# estimado de muestreo de acróporas.
+sitios_estimados_acropora_sf <- readOGR(dsn = paste0(dir_datos, "2014_sitios_estimados_acropora"))
+plot(sitios_estimados_acropora_sf[1:10,])
+
+# Obteniendo el shape de parches de acrópora ajustados para intersectarlo con los con sitios estimados, y de esta manera, corregir parcialmente el error de GPS.
+parches_acropora_ajustados_sh <- readOGR(dsn = paste0(dir_datos, "2014_parches_acropora_ajustados"))
+#plot(parches_acropora_ajustados_sh[1:5,])
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Obteniendo la intersección de ambos shapefiles.
+
+# Comprobando proyecciones:
+projection(parches_acropora_ajustados_sh) == projection(sitios_estimados_acropora_sf)
+# Una es en UTM y otra en longlat, nos quedamos con UTM porque es la del brick.
+
+sitios_estimados_acropora_sf_utm <- spTransform(sitios_estimados_acropora_sf, projection(parches_acropora_ajustados_sh))
+projection(parches_acropora_ajustados_sh) == projection(sitios_estimados_acropora_sf_utm)
+
+# Intersectando ambos shapes, byid = TRUE hace que no se haga un polígono gigante con
+# todas las intersecciones, sino varios polígonos pequeños
+# raster::intersect difiere de rgeos::gintersect en que preserva data.
+intersecciones_parches_sitios_estimados <- raster::intersect(parches_acropora_ajustados_sh, sitios_estimados_acropora_sf_utm)
+
+# Ploteando parches, primero se restringe el extent (primer shape) y luego se plotean
+# de los otro shapes los objetos que quepan en dicho extent.
+
+plot(extent(intersecciones_parches_sitios_estimados[1:5,]))
+plot(intersecciones_parches_sitios_estimados, col = 'red', add = TRUE)
+plot(sitios_estimados_acropora_sf_utm, add = TRUE)
+plot(parches_acropora_ajustados_sh, add = TRUE)
+# Tudo bem
+
+# Es más eficiente extraer del brick primero lo correspondiente a los parches y
+# reextraer de los buffers, porque se evita el problema combinatorio de parches
+# vs buffers.
+```
+
+```{r, warning=FALSE, message=FALSE}
+# # Extrayendo del brick las variables correspondientes cada elemento en el shape
+# # de intersecciones, por pixel.
+# variables_raster_intersecciones_df <- raster::extract(brick_insumos,
+#   intersecciones_parches_sitios_estimados,
+#   method = "simple", cellnumbers = TRUE, df = TRUE, weights = TRUE)
+# glimpse(variables_raster_intersecciones_df)
+# 
+# # weights es una variable que a cada pixel le asocia la proporción que le corresponde
+# # del polígono considerado, por lo que siempre suman 1 por polígono.
+# 
+# # Algunos resúmenes:
+# variables_raster_intersecciones_df %>%
+#   group_by(ID) %>%
+#   tally() %>%
+#   View()
+# 
+# variables_raster_intersecciones_df %>%
+#   group_by(ID) %>%
+#   summarise(
+#     uno = sum(weight)
+#   ) %>%
+#   View()
+# 
+# # Extrayendo para 2 intersecciones y comparando:
+# raster::extract(brick_insumos,
+#   intersecciones_parches_sitios_estimados[c(1,125),],
+#   method = "simple", cellnumbers = TRUE, df = TRUE, weights = TRUE) %>%
+#   View()
+# # Todo bien, salen en orden.
+#
+# Haciendo el join de "variables_raster_intersecciones_df" con los datos de
+# "intersecciones_parches_sitios_estimados" y extrayendo atributos necesarios:
+
+# df_pixeles_desglosados <- variables_raster_intersecciones_df %>%
+#   inner_join(intersecciones_parches_sitios_estimados@data %>%
+#       mutate(
+#         ID = 1:nrow(.)
+#       ), by = "ID")
+# glimpse(df_pixeles_desglosados)
+#saveRDS(df_pixeles_desglosados, "../../productos/df_pixeles_desglosados.RData")
+
+df_pixeles_desglosados <-readRDS("../../productos/df_pixeles_desglosados.RData")
+
+# Viendo que cada ID corresponda a un Punto
+df_pixeles_desglosados %>%
+  group_by(ID, Punto) %>%
+  tally() %>%
+  nrow()
+
+df_pixeles_desglosados$Punto %>%
+  unique() %>%
+  length()
+# Perfecto!
+
+# Revisando que cada pixel tenga al menos variables satelitales del 2010 o del 2011:
+df_pixeles_desglosados %>%
+  filter(
+    !is.na(WV2_2010.12.20_Mexico_bref_geo_UTM16N.1) |
+      !is.na(WV2_2011.01.19_Mexico_bref_geo_UTM16N.1)
+  ) %>%
+  nrow()
+
+nrow(df_pixeles_desglosados)
+# Perfecto
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Creando el DF de trabajo para el 2010
+df_trabajo_2010 <- df_pixeles_desglosados %>%
+  filter(!is.na(WV2_2010.12.20_Mexico_bref_geo_UTM16N.1)) %>%
+  select(
+    ID,
+    WV2_2010_1 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.1,
+    WV2_2010_2 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.2,
+    WV2_2010_3 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.3,
+    WV2_2010_4 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.4,
+    batimetria = batimetria_real_pm_completa1,
+    pendiente = slope_pm1,
+    aspecto = aspect_pm,
+    peso = weight,
+    punto = Punto,
+    parche = Parche,
+    arrecife = Arrecife,
+    latitud = Lat,
+    longitud = Long,
+    profundidad_media_m = Av_depth_m,
+    cobertura_acropora = Acropora_c
+  ) %>%
   mutate(
-    id = 0:(nrow(area_muestreada_sh@data) - 1) %>%
-      as.character()
+    punto = as.character(punto) %>%
+      tolower(),
+    parche = as.character(parche) %>%
+      tolower(),
+    arrecife = as.character(arrecife) %>%
+      tolower(),
+    # pesos enteros para calcular medianas.
+    peso_entero = 10^9 * peso
+  ) %>%
+  # Calculando tabla por polígono
+  ddply(.(ID), function(x){
+    
+      # se nombran las variables porque se usará ldply y se quiere tener el .id
+      variables_stack <- c(
+        "WV2_2010_1" = "WV2_2010_1",
+        "WV2_2010_2" = "WV2_2010_2", # Muy correlacionada con WV2_2010_1
+        "WV2_2010_3" = "WV2_2010_3", # Muy correlacionada con WV2_2010_1
+        "WV2_2010_4" = "WV2_2010_4",
+        "batimetria" = "batimetria",
+        "pendiente" = "pendiente",
+        "aspecto" = "aspecto"
+      )
+      
+      # Calculando resúmenes por variable para cada polígono.
+      resumenes_poligono <- ldply(variables_stack, function(variable,x){
+        # Obteniendo los valores de cada variable de una manera un tanto rara,
+        # pues no se puede hacer x$variable pues "variable" es una variable
+        valores <- x[[variable]]
+        pesos <- x$peso_entero
+        
+        resumenes_variable <-data_frame(
+          media =  mean(valores, na.rm = TRUE),
+          media_ponderada = weighted.mean(valores, pesos, na.rm = TRUE),
+          mediana = median(valores, na.rm = TRUE),
+          mediana_ponderada = weightedMedian(valores, pesos, na.rm = TRUE),
+          sd = sd(valores, na.rm = TRUE),
+          sd_ponderada = weightedSd(valores, pesos, na.rm = TRUE)
+        )
+        return(resumenes_variable)
+      }, x) %>%
+        gather(resumen, valor, -.id) %>%
+        # Creando títulos
+        transmute(
+          titulo = paste0(.id, "_", resumen),
+          valor = valor
+        ) %>%
+        # Acomodando tabla
+        spread(titulo, valor)
+      
+      # Creando tabla final para el polígono correspondiente
+      tabla_poligono <- cbind(
+        data_frame(
+          punto = x$punto[1],
+          parche = x$parche[1],
+          arrecife = x$arrecife[1],
+          latitud = x$latitud[1],
+          longitud = x$longitud[1],
+          profundidad_media_m = x$profundidad_media_m[1],
+          cobertura_acropora = x$cobertura_acropora[1]
+        ),
+        resumenes_poligono
+      )
+    })
+
+# comprobando número de polígonos para el 2010.
+nrow(df_trabajo_2010)
+
+df_pixeles_desglosados %>%
+  filter(!is.na(WV2_2010.12.20_Mexico_bref_geo_UTM16N.1)) %>%
+  group_by(ID) %>%
+  tally() %>%
+  nrow()
+# bien!
+
+# Y el DF de trabajo para el 2011
+# df_trabajo_2011 <- df_pixeles_desglosados %>%
+#   filter(!is.na(WV2_2011.01.19_Mexico_bref_geo_UTM16N.1)) %>%
+#   select(
+#     ID,
+#     WV2_2011_1 = WV2_2011.01.19_Mexico_bref_geo_UTM16N.1,
+#     WV2_2011_2 = WV2_2011.01.19_Mexico_bref_geo_UTM16N.2,
+#     WV2_2011_3 = WV2_2011.01.19_Mexico_bref_geo_UTM16N.3,
+#     WV2_2011_4 = WV2_2011.01.19_Mexico_bref_geo_UTM16N.4,
+#     batimetria = batimetria_real_pm_completa1,
+#     pendiente = slope_pm1,
+#     aspecto = aspect_pm,
+#     peso = weight,
+#     punto = Punto,
+#     parche = Parche,
+#     arrecife = Arrecife,
+#     latitud = Lat,
+#     longitud = Long,
+#     profundidad_media_m = Av_depth_m,
+#     cobertura_acropora = Acropora_c
+#   ) %>%
+#   mutate(
+#     punto = as.character(punto) %>%
+#       tolower(),
+#     parche = as.character(parche) %>%
+#       tolower(),
+#     arrecife = as.character(arrecife) %>%
+#       tolower(),
+#     # pesos enteros para calcular medianas.
+#     peso_entero = 10^9 * peso
+#   ) %>%
+#   # Calculando tabla por polígono
+#   ddply(.(ID), function(x){
+#     
+#       # se nombran las variables porque se usará ldply y se quiere tener el .id
+#       variables_stack <- c(
+#         "WV2_2011_1" = "WV2_2011_1",
+#         "WV2_2011_2" = "WV2_2011_2", # Muy correlacionada con WV2_2011_1
+#         "WV2_2011_3" = "WV2_2011_3", # Muy correlacionada con WV2_2011_1
+#         "WV2_2011_4" = "WV2_2011_4",
+#         "batimetria" = "batimetria",
+#         "pendiente" = "pendiente",
+#         "aspecto" = "aspecto"
+#       )
+#       
+#       # Calculando resúmenes por variable para cada polígono.
+#       resumenes_poligono <- ldply(variables_stack, function(variable,x){
+#         # Obteniendo los valores de cada variable de una manera un tanto rara,
+#         # pues no se puede hacer x$variable pues "variable" es una variable
+#         valores <- x[[variable]]
+#         pesos <- x$peso_entero
+#         
+#         resumenes_variable <-data_frame(
+#           media =  mean(valores, na.rm = TRUE),
+#           media_ponderada = weighted.mean(valores, pesos, na.rm = TRUE),
+#           mediana = median(valores, na.rm = TRUE),
+#           mediana_ponderada = weightedMedian(valores, pesos, na.rm = TRUE),
+#           sd = sd(valores, na.rm = TRUE),
+#           sd_ponderada = weightedSd(valores, pesos, na.rm = TRUE)
+#         )
+#         
+#         return(resumenes_variable)
+#       }, x) %>%
+#         gather(resumen, valor, -.id) %>%
+#         # Creando títulos
+#         transmute(
+#           titulo = paste0(.id, "_", resumen),
+#           valor = valor
+#         ) %>%
+#         # Acomodando tabla
+#         spread(titulo, valor)
+#       
+#       # Creando tabla final para el polígono correspondiente
+#       tabla_poligono <- cbind(
+#         data_frame(
+#           punto = x$punto[1],
+#           parche = x$parche[1],
+#           arrecife = x$arrecife[1],
+#           latitud = x$latitud[1],
+#           longitud = x$longitud[1],
+#           profundidad_media_m = x$profundidad_media_m[1],
+#           cobertura_acropora = x$cobertura_acropora[1]
+#         ),
+#         resumenes_poligono
+#       )
+#     })
+# 
+# # Comprobando número de polígonos totales
+# nrow(df_trabajo_2011)
+# 
+# df_pixeles_desglosados %>%
+#   filter(!is.na(WV2_2011.01.19_Mexico_bref_geo_UTM16N.1)) %>%
+#   group_by(ID) %>%
+#   tally() %>%
+#   nrow()
+# # bien!
+# 
+# # Y la cantidad de registros en la unión:
+# nrow(df_trabajo_2010) + nrow(df_trabajo_2011) - nrow(df_trabajo_2010 %>%
+#     inner_join(df_trabajo_2011, by = "ID"))
+# 
+# # Si usamos el df del 2011, sólo ganamos 45 nuevos puntos de 925, por lo tanto,
+# # no vale la pena el esfuerzo
+# nrow(df_trabajo_2011) - nrow(df_trabajo_2010 %>%
+#     inner_join(df_trabajo_2011, by = "ID"))
+# 
+# df_pixeles_desglosados %>%
+#   group_by(ID) %>%
+#   tally() %>%
+#   nrow()
+# # perfecto! Se puede comenzar con los análisis
+```
+
+```{r, warning=FALSE, message=FALSE}
+
+# Calculando la correlación entre las variables de interés
+correlaciones_variables <- df_trabajo_2010 %>%
+  filter(complete.cases(.)) %>%
+  select(
+    latitud,
+    longitud,
+    profundidad_media_m,
+    cobertura_acropora,
+    aspecto_media:WV2_2010_4_sd_ponderada
+  ) %>%
+  cor() %>%
+  as_data_frame() %>%
+  mutate(
+    variable_1 = colnames(.)
   ) %>%
   select(
-    id,
-    arrecife = Reef,
-    area = Area_m2
+    variable_1,
+    everything()
+  ) %>%
+  gather(
+    key = variable_2, value = correlacion, latitud:WV2_2010_4_sd_ponderada
   )
-glimpse(area_muestreada_fr)
-#View(area_muestreada_fr)
 
-# Shape con los puntos muestreados, casi no sirve porque sólo tiene las coordenadas,
-# por lo tanto, usaremos los datos agregados por parche.
-puntos_muestreo_sh <- readOGR(dsn = paste0(dir_datos, "/2014_puntos_muestreo"),
-  layer = "2014_puntos_muestreo")
-puntos_muestreo_fr <- puntos_muestreo_sh %>%
-  as.data.frame()
-glimpse(puntos_muestreo_fr)
-#View(puntos_muestreo_fr)
+# Mapa de calor de las correlaciones
+ggplot(correlaciones_variables,
+  aes(x = variable_1, y = variable_2, fill = correlacion)) +
+  geom_tile() +
+  scale_fill_gradient2() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# Podemos ver un patrón muy interesante. Sólo necesitamos quedarnos
+# con lo siguiente:
+# 1. Por variable, con una medida de tendencia central y una de dispersión.
+# 2. Sólo una de las variables WV2_2010_1:WV2_2010_2:
+
+df_trabajo_2010_variables_selectas <- df_trabajo_2010 %>%
+  mutate(
+    # Categorizando cobertura de acrópora por cuantiles
+    cat_cobertura_acropora_2 = cut(cobertura_acropora,
+      breaks = quantile(cobertura_acropora, probs = c(0, 0.5, 1)),
+      include.lowest = TRUE),
+    
+    cat_cobertura_acropora_4 = cut(cobertura_acropora,
+      breaks = quantile(cobertura_acropora, probs = seq(0, 1, 0.25)),
+      include.lowest = TRUE)
+  ) %>%
+  select(
+    ID,
+    cobertura_acropora,
+    cat_cobertura_acropora_2,
+    cat_cobertura_acropora_4,
+    latitud,
+    longitud,
+    profundidad_media_m,
+    dplyr::contains("media_ponderada"),
+    dplyr::contains("sd_ponderada"),
+    -dplyr::contains("WV2_2010_2"),
+    -dplyr::contains("WV2_2010_3")
+  )
+
+```
+  
+```{r, warning=FALSE, message=FALSE}
+# Análisis exploraatorio
+
+df_plot_2010 <- df_trabajo_2010_variables_selectas %>%
+  gather(llave, valor, latitud:WV2_2010_4_sd_ponderada)
+glimpse(df_plot_2010)
+
+ggplot(data = df_plot_2010, aes(x = valor, y = cobertura_acropora)) +
+  geom_point(alpha = 0.01) +
+  geom_smooth() +
+  facet_wrap(~llave, scales = "free", ncol = 2) +
+  ylim(0, 70)
+# Las tendencias son muy suaves, casi nulas, para las variables que puedieran
+# presentarlas.
+
+ggplot(data = df_plot_2010, aes(x = cobertura_acropora, y = valor)) +
+  geom_point(alpha = 0.01) +
+  geom_smooth() +
+  facet_wrap(~llave, scales = "free", ncol = 2)
+# Aquí se aprecia mejor la tendencia en latitud y longitud, si en aspecto
+# hay algo, es muy débil para notarlo. Es decir, latitud y longitud son nuestras
+# mejores variables.
+
+# Parece confetti, se espera que ni la latitud y longitud solas expliquen bien la
+# cobertura de A. palmata
+ggplot(data = df_trabajo_2010, aes(x = longitud, y = latitud, colour = cobertura_acropora)) +
+  geom_point(alpha = 0.5) +
+  scale_color_gradientn(colours = rainbow(5))
+
+# No se aprecian tendencias lineales significativas, igual y las variables, en su
+# conjunto, y no suponiendo tendencias lineales, explican mejor la cobertura de
+# A pal.
+
+# Ahora perfilando las distintas variables por la categorización de la cobertura
+# de acrópora:
+
+ggplot(data = df_plot_2010, aes(x = cat_cobertura_acropora_2, y = valor)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.03) +
+  facet_wrap(~llave, scales = "free", ncol = 2)
+# Se ven tendencias en "latitud", "longitud" y "aspecto_media_ponderada"
+
+ggplot(data = df_plot_2010, aes(x = cat_cobertura_acropora_4, y = valor)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.03) +
+  facet_wrap(~llave, scales = "free", ncol = 2)
+# Se ven tendencias en "latitud", "longitud" y "aspecto_media_ponderada"
 ```
 
+```{r, warning=FALSE, message=FALSE}
+# Ajuste de primeros modelos predictivos:
+# 1. Random Forest, sin tomar en cuenta autocorrelación espacial.
+# 2. Usando todas las variables, y luego quitando latitud y longitud
+# 3. Usando como variable de salido: "cobertura_acropora"" (regresión),
+# "cat_cobertura_acropora_2" y "cat_cobertura_acropora_4" (clasificación).
+
+set.seed(12345)
+
+y_regresion <- df_trabajo_2010_variables_selectas %>%
+  filter(complete.cases(.)) %>%
+  '$'(., cobertura_acropora)
+
+y_clasificacion_2 <- df_trabajo_2010_variables_selectas %>%
+  filter(complete.cases(.)) %>%
+  '$'(., cat_cobertura_acropora_2)
+
+y_clasificacion_4 <- df_trabajo_2010_variables_selectas %>%
+  filter(complete.cases(.)) %>%
+  '$'(., cat_cobertura_acropora_4)
+
+# Primer round: todas las variables vs "y_regresion", "y_clasificacion_2" y
+# "y_clasificacion_4"
+
+x1 <- df_trabajo_2010_variables_selectas %>%
+  filter(complete.cases(.)) %>%
+  select(
+    latitud:WV2_2010_4_sd_ponderada
+  )
+glimpse(x1)
+
+# No explica mucho para regresión
+rf_1_regresion <- randomForest(x = x1, y = y_regresion, importance = TRUE)
+  
+rf_1_clasificacion_2 <- randomForest(x = x1, y = y_clasificacion_2,
+  importance = TRUE)
+# Tasa de éxito del ~65%, mucho mejor.
+
+varImpPlot(rf_1_clasificacion_2)
+# Longitud y latitud son las más importantes, hay que ver qué onda si hacemos
+# validación cruzada espacial.
+
+rf_1_clasificacion_4 <- randomForest(x = x1, y = y_clasificacion_4,
+  importance = TRUE)
+# Tasa de éxito del ~45%, por lo que funciona mejor para 2 clases.
+
+# Seleccionando otras variables:
+
+# x1 sin latitud ni longitud
+x2 <- df_trabajo_2010_variables_selectas %>%
+  filter(complete.cases(.)) %>%
+  select(
+    profundidad_media_m:WV2_2010_4_sd_ponderada
+  )
+glimpse(x2)
+
+rf_2_clasificacion_2 <- randomForest(x = x2, y = y_clasificacion_2,
+  importance = TRUE)
+varImpPlot(rf_2_clasificacion_2)
+# Tasa de éxito de ~63%, no baja mucho!
+
+# obteniendo las variables más importantes en varias corridas del rf anterior:
+df_variables_importantes <- ldply(1:100, function(i, x2, y_clasificacion_2){
+  # Ajustando un Random Forest:
+  rf_aux <- randomForest(x = x2, y = y_clasificacion_2, importance = TRUE)
+  
+  # Calculando las importancias de las variables:
+  importancia_variables_aux <- varImpPlot(rf_aux) %>%
+    as.matrix()
+  nombres_variables <- rownames(importancia_variables_aux)
+  
+  # Generando data frame con las 5 variables más importantes, en órden, por tipo
+  # de prueba:
+  variables_importantes_exactitud_df <- importancia_variables_aux %>%
+    as_data_frame() %>%
+    mutate(
+      variable = nombres_variables
+    ) %>%
+    arrange(desc(MeanDecreaseAccuracy)) %>%
+    head(5) %>%
+    transmute(
+      posicion_exactitud = 1:nrow(.),
+      variable_exactitud = variable
+    )
+  
+    variables_importantes_gini_df <- importancia_variables_aux %>%
+    as_data_frame() %>%
+    mutate(
+      variable = nombres_variables
+    ) %>%
+    arrange(desc(MeanDecreaseGini)) %>%
+    head(5) %>%
+    transmute(
+      posicion_gini = 1:nrow(.),
+      variable_gini = variable
+    )
+    
+    df_resultado <- variables_importantes_exactitud_df %>%
+      cbind(variables_importantes_gini_df) %>%
+      mutate(
+        corrida = i
+      ) %>%
+      select(
+        corrida,
+        everything()
+      )
+
+    return(df_resultado)
+  
+}, x2, y_clasificacion_2)
+
+variables_importantes_gini <- df_variables_importantes %>%
+  group_by(posicion_gini, variable_gini) %>%
+  tally() %>%
+  arrange(posicion_gini, desc(n))
+
+variables_importantes_exactitud <- df_variables_importantes %>%
+  group_by(posicion_exactitud, variable_exactitud) %>%
+  tally() %>%
+  arrange(posicion_exactitud, desc(n))
+
+# Utilizando las variables más importantes de acuerdo a varias corridas del RF anterior:
+
+# - WV2_2010_1_sd_ponderada
+# - WV2_2010_4_sd_ponderada
+# - aspecto_media_ponderada
+# - pendiente_sd_ponderada
+# - batimetria_media_ponderada
+# - WV2_2010_4_media_ponderada
+
+x3 <- df_trabajo_2010_variables_selectas %>%
+  filter(complete.cases(.)) %>%
+  select(
+    WV2_2010_1_sd_ponderada,
+    WV2_2010_4_sd_ponderada,
+    aspecto_media_ponderada,
+    pendiente_sd_ponderada,
+    batimetria_media_ponderada,
+    WV2_2010_4_media_ponderada
+  )
+glimpse(x3)
+
+rf_3_clasificacion_2 <- randomForest(x = x3, y = y_clasificacion_2,
+  importance = TRUE)
+varImpPlot(rf_3_clasificacion_2)
+# Tasa de éxito ~62.5%. Nos quedamos con esas variables, por ahora.
 ```
 
+```{r, warning=FALSE, message=FALSE}
+# Validación cruzada espacial
 
-
-
+```
+Sergio:
+1. Me ofrece los viáticos del Mau.
+2. Por experiencia del Mau, me va a estar fregando por eso para siempre. Es un anzuelo.
+3. Mejor le digo a Lorenzo que si me consigue para el avión y lo que sea para la comida ya la armamos.
