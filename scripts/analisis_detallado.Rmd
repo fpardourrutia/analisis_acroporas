@@ -83,7 +83,7 @@ library("raster")
 library("rgdal")
 
 # Para trabajar con shapes.
-#library("rgeos") # raster lo contiene
+#library("rgeos") # es una dependencia de raster
 
 library("plyr")
 library("dplyr")
@@ -96,10 +96,16 @@ library("stringi")
 # Para calcular medianas ponderadas
 library("matrixStats")
 
+# Para usar escalamiento multidimensional con TSNE
+#library("tsne")
+
 # Para ajustar RandomForest
 library("randomForest")
 
 # Para hacer Validación Cruzada espacial
+# lo estoy instalando de mi Github: lo tuve que parchar porque está inestable
+# library("devtools")
+# install_github("fpardourrutia/sperrorest@object-incompatibility")
 library("sperrorest")
 ```
 
@@ -302,90 +308,91 @@ nrow(df_pixeles_desglosados)
 
 ```{r, warning=FALSE, message=FALSE}
 # Creando el DF de trabajo para el 2010
-df_trabajo_2010 <- df_pixeles_desglosados %>%
-  filter(!is.na(WV2_2010.12.20_Mexico_bref_geo_UTM16N.1)) %>%
-  select(
-    ID,
-    WV2_2010_1 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.1,
-    WV2_2010_2 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.2,
-    WV2_2010_3 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.3,
-    WV2_2010_4 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.4,
-    batimetria = batimetria_real_pm_completa1,
-    pendiente = slope_pm1,
-    aspecto = aspect_pm,
-    peso = weight,
-    punto = Punto,
-    parche = Parche,
-    arrecife = Arrecife,
-    latitud = Lat,
-    longitud = Long,
-    profundidad_media_m = Av_depth_m,
-    cobertura_acropora = Acropora_c
-  ) %>%
-  mutate(
-    punto = as.character(punto) %>%
-      tolower(),
-    parche = as.character(parche) %>%
-      tolower(),
-    arrecife = as.character(arrecife) %>%
-      tolower(),
-    # pesos enteros para calcular medianas.
-    peso_entero = 10^9 * peso
-  ) %>%
-  # Calculando tabla por polígono
-  ddply(.(ID), function(x){
-    
-      # se nombran las variables porque se usará ldply y se quiere tener el .id
-      variables_stack <- c(
-        "WV2_2010_1" = "WV2_2010_1",
-        "WV2_2010_2" = "WV2_2010_2", # Muy correlacionada con WV2_2010_1
-        "WV2_2010_3" = "WV2_2010_3", # Muy correlacionada con WV2_2010_1
-        "WV2_2010_4" = "WV2_2010_4",
-        "batimetria" = "batimetria",
-        "pendiente" = "pendiente",
-        "aspecto" = "aspecto"
-      )
-      
-      # Calculando resúmenes por variable para cada polígono.
-      resumenes_poligono <- ldply(variables_stack, function(variable,x){
-        # Obteniendo los valores de cada variable de una manera un tanto rara,
-        # pues no se puede hacer x$variable pues "variable" es una variable
-        valores <- x[[variable]]
-        pesos <- x$peso_entero
-        
-        resumenes_variable <-data_frame(
-          media =  mean(valores, na.rm = TRUE),
-          media_ponderada = weighted.mean(valores, pesos, na.rm = TRUE),
-          mediana = median(valores, na.rm = TRUE),
-          mediana_ponderada = weightedMedian(valores, pesos, na.rm = TRUE),
-          sd = sd(valores, na.rm = TRUE),
-          sd_ponderada = weightedSd(valores, pesos, na.rm = TRUE)
-        )
-        return(resumenes_variable)
-      }, x) %>%
-        gather(resumen, valor, -.id) %>%
-        # Creando títulos
-        transmute(
-          titulo = paste0(.id, "_", resumen),
-          valor = valor
-        ) %>%
-        # Acomodando tabla
-        spread(titulo, valor)
-      
-      # Creando tabla final para el polígono correspondiente
-      tabla_poligono <- cbind(
-        data_frame(
-          punto = x$punto[1],
-          parche = x$parche[1],
-          arrecife = x$arrecife[1],
-          latitud = x$latitud[1],
-          longitud = x$longitud[1],
-          profundidad_media_m = x$profundidad_media_m[1],
-          cobertura_acropora = x$cobertura_acropora[1]
-        ),
-        resumenes_poligono
-      )
-    })
+# df_trabajo_2010 <- df_pixeles_desglosados %>%
+#   filter(!is.na(WV2_2010.12.20_Mexico_bref_geo_UTM16N.1)) %>%
+#   select(
+#     ID,
+#     WV2_2010_1 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.1,
+#     WV2_2010_2 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.2,
+#     WV2_2010_3 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.3,
+#     WV2_2010_4 = WV2_2010.12.20_Mexico_bref_geo_UTM16N.4,
+#     batimetria = batimetria_real_pm_completa1,
+#     pendiente = slope_pm1,
+#     aspecto = aspect_pm,
+#     peso = weight,
+#     punto = Punto,
+#     parche = Parche,
+#     arrecife = Arrecife,
+#     latitud = Lat,
+#     longitud = Long,
+#     profundidad_media_m = Av_depth_m,
+#     cobertura_acropora = Acropora_c
+#   ) %>%
+#   mutate(
+#     punto = as.character(punto) %>%
+#       tolower(),
+#     parche = as.character(parche) %>%
+#       tolower(),
+#     arrecife = as.character(arrecife) %>%
+#       tolower(),
+#     # pesos enteros para calcular medianas.
+#     peso_entero = 10^9 * peso
+#   ) %>%
+#   # Calculando tabla por polígono
+#   ddply(.(ID), function(x){
+#     
+#       # se nombran las variables porque se usará ldply y se quiere tener el .id
+#       variables_stack <- c(
+#         "WV2_2010_1" = "WV2_2010_1",
+#         "WV2_2010_2" = "WV2_2010_2", # Muy correlacionada con WV2_2010_1
+#         "WV2_2010_4" = "WV2_2010_4",
+#         "batimetria" = "batimetria",
+#         "pendiente" = "pendiente",
+#         "aspecto" = "aspecto"
+#       )
+#       
+#       # Calculando resúmenes por variable para cada polígono.
+#       resumenes_poligono <- ldply(variables_stack, function(variable,x){
+#         # Obteniendo los valores de cada variable de una manera un tanto rara,
+#         # pues no se puede hacer x$variable pues "variable" es una variable
+#         valores <- x[[variable]]
+#         pesos <- x$peso_entero
+#         
+#         resumenes_variable <-data_frame(
+#           media =  mean(valores, na.rm = TRUE),
+#           media_ponderada = weighted.mean(valores, pesos, na.rm = TRUE),
+#           mediana = median(valores, na.rm = TRUE),
+#           mediana_ponderada = weightedMedian(valores, pesos, na.rm = TRUE),
+#           sd = sd(valores, na.rm = TRUE),
+#           sd_ponderada = weightedSd(valores, pesos, na.rm = TRUE)
+#         )
+#         return(resumenes_variable)
+#       }, x) %>%
+#         gather(resumen, valor, -.id) %>%
+#         # Creando títulos
+#         transmute(
+#           titulo = paste0(.id, "_", resumen),
+#           valor = valor
+#         ) %>%
+#         # Acomodando tabla
+#         spread(titulo, valor)
+#       
+#       # Creando tabla final para el polígono correspondiente
+#       tabla_poligono <- cbind(
+#         data_frame(
+#           punto = x$punto[1],
+#           parche = x$parche[1],
+#           arrecife = x$arrecife[1],
+#           latitud = x$latitud[1],
+#           longitud = x$longitud[1],
+#           profundidad_media_m = x$profundidad_media_m[1],
+#           cobertura_acropora = x$cobertura_acropora[1]
+#         ),
+#         resumenes_poligono
+#       )
+#     })
+# saveRDS(df_trabajo_2010, "../../productos/df_trabajo_2010.RData")
+df_trabajo_2010 <- readRDS("../../productos/df_trabajo_2010.RData")
 
 # comprobando número de polígonos para el 2010.
 nrow(df_trabajo_2010)
@@ -555,13 +562,48 @@ df_trabajo_2010_variables_selectas <- df_trabajo_2010 %>%
     
     cat_cobertura_acropora_4 = cut(cobertura_acropora,
       breaks = quantile(cobertura_acropora, probs = seq(0, 1, 0.25)),
+      include.lowest = TRUE),
+    
+    # Para validación cruzada espacial
+    parche = as.factor(parche),
+    arrecife = as.factor(arrecife),
+    
+    cat_latitud_4 = cut(latitud,
+      breaks = quantile(latitud, probs = seq(0, 1, 0.25)),
+      include.lowest = TRUE),
+
+    cat_latitud_5 = cut(latitud,
+      breaks = quantile(latitud, probs = seq(0, 1, 0.2)),
+      include.lowest = TRUE),
+
+    cat_latitud_10 = cut(latitud,
+      breaks = quantile(latitud, probs = seq(0, 1, 0.1)),
       include.lowest = TRUE)
+    
   ) %>%
+  # Para plotear arrecifes en orden de latitud
+  group_by(arrecife) %>%
+    mutate(
+      latitud_media_arrecife = mean(latitud)
+    ) %>%
+  ungroup() %>%
   select(
     ID,
+    
+    # VC espacial
+    parche,
+    arrecife,
+    latitud_media_arrecife,
+    cat_latitud_4,
+    cat_latitud_5,
+    cat_latitud_10,
+    
+    # Variables de salida
     cobertura_acropora,
     cat_cobertura_acropora_2,
     cat_cobertura_acropora_4,
+    
+    # Variables de entrada
     latitud,
     longitud,
     profundidad_media_m,
@@ -569,16 +611,33 @@ df_trabajo_2010_variables_selectas <- df_trabajo_2010 %>%
     dplyr::contains("sd_ponderada"),
     -dplyr::contains("WV2_2010_2"),
     -dplyr::contains("WV2_2010_3")
-  )
-
+  ) %>%
+  filter(complete.cases(.))
 ```
   
 ```{r, warning=FALSE, message=FALSE}
-# Análisis exploraatorio
+# Análisis exploratorio
 
 df_plot_2010 <- df_trabajo_2010_variables_selectas %>%
   gather(llave, valor, latitud:WV2_2010_4_sd_ponderada)
 glimpse(df_plot_2010)
+
+# Perfilando las variables ambientales por arrecife:
+ggplot(data = df_plot_2010,
+  aes(x = reorder(arrecife, latitud_media_arrecife), y = valor)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.3, size = 0.5) +
+  facet_wrap(~llave, scales = "free", ncol = 5) +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+    )
+# Se ve que Limones tiene densidades únicas en varias variables. Por ejemplo,
+# WV2_2010_1/4_media_ponderada o WV2_2010_1_sd_ponderada. Esto es importante
+# porque puede justificar el hecho que cuando no se entrena con datos de limones,
+# sube mucho el error de predicción para este arrecife, y apoya que nos quedemos con
+# una VC que imponga
 
 ggplot(data = df_plot_2010, aes(x = valor, y = cobertura_acropora)) +
   geom_point(alpha = 0.01) +
@@ -596,11 +655,24 @@ ggplot(data = df_plot_2010, aes(x = cobertura_acropora, y = valor)) +
 # hay algo, es muy débil para notarlo. Es decir, latitud y longitud son nuestras
 # mejores variables.
 
-# Parece confetti, se espera que ni la latitud y longitud solas expliquen bien la
-# cobertura de A. palmata
-ggplot(data = df_trabajo_2010, aes(x = longitud, y = latitud, colour = cobertura_acropora)) +
+#  Ploteando los sitios por arrecife:
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = longitud, y = latitud, colour = arrecife)) +
+  geom_point()
+
+# Cobertura continua
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = longitud, y = latitud, colour = cobertura_acropora)) +
   geom_point(alpha = 0.5) +
   scale_color_gradientn(colours = rainbow(5))
+# Parece confetti, se espera que ni la latitud y longitud solas expliquen bien la
+# cobertura de A. palmata
+
+# Cobertura discretizada a 2 clases
+ggplot(data = df_trabajo_2010_variables_selectas, aes(x = longitud, y = latitud, colour = cat_cobertura_acropora_2)) +
+  geom_point(alpha = 0.5)
+# Parece confetti, se espera que ni la latitud y longitud solas expliquen bien la
+# cobertura de A. palmata
 
 # No se aprecian tendencias lineales significativas, igual y las variables, en su
 # conjunto, y no suponiendo tendencias lineales, explican mejor la cobertura de
@@ -623,6 +695,87 @@ ggplot(data = df_plot_2010, aes(x = cat_cobertura_acropora_4, y = valor)) +
 ```
 
 ```{r, warning=FALSE, message=FALSE}
+# Clustering de variables ambientales, para ver si una validación cruzada espacial
+# puede ser "injusta" con el modelo en ciertos folds (al no darle los insumos
+# adecuados)
+
+# df_trabajo_2010_kmeans <- df_trabajo_2010_variables_selectas %>%
+#   select(
+#     aspecto_media_ponderada:WV2_2010_4_sd_ponderada
+#   ) %>%
+#   # Para estandarizar datos
+#   base::scale() %>%
+#   as_data_frame()
+# 
+# # K-medias
+# set.seed(12345)
+# 
+# # Haciendo la gráfica de codo para obtener el número óptimo de clusters:
+# df_grafica_codo <- ldply(1:500, function(i){
+#   clustering <- kmeans(df_trabajo_2010_kmeans,
+#     centers = i,
+#     iter.max = 50,
+#     nstart = 25)
+#   resultado <- data_frame(
+#     num_clusters = i,
+#     withinss = clustering$tot.withinss
+#     )
+#   return(resultado)
+# })
+# 
+# ggplot(data = df_grafica_codo, aes(x = num_clusters, y = withinss)) +
+#   geom_line()
+# # Esto va a ser un análisis en sí mismo porque la gráfica de codo no me dice mucho.
+
+# matriz_distancias <- df_trabajo_2010_variables_selectas %>%
+#   select(
+#     aspecto_media_ponderada:WV2_2010_4_sd_ponderada
+#   ) %>%
+#   # Para estandarizar datos
+#   base::scale() %>%
+#   dist()
+
+# Creo que clustering Jerárquico ni T-SNE tienen sentido porque
+# se basan en distancias entre sitios, y eso creo que es raro considerando la naturaleza de las variables.
+
+# # Clustering Jerárquico. Como con vecino más lejano me salía un cluster muy grande,
+# # mejor uso Ward para minimizar within SST
+# clustering <- hclust(matriz_distancias, method = "ward.D")
+# plot(clustering, hang = -1)
+# 
+# df_trabajo_2010_grupos_hclust <- df_trabajo_2010_variables_selectas %>%
+#   mutate(
+#     grupo =  cutree(clustering, h = 25) %>%
+#       as.character()
+#   )
+# 
+# df_trabajo_2010_grupos_hclust %>%
+#   group_by(grupo) %>%
+#   tally()
+# 
+# ggplot(data = df_trabajo_2010_grupos_hclust,
+#   aes(x = longitud,
+#     y = latitud,
+#     colour = grupo)) +
+#   geom_point(alpha = 0.5) +
+#   facet_grid(~grupo)
+# Jajaja no sale nada
+  
+# # T-SNE
+# tsne_variables_ambientales <- tsne(matriz_distancias, perplexity = 100, max_iter = 2000) %>%
+#   as_data_frame() %>%
+#   mutate(
+#     arrecife = df_trabajo_2010_variables_selectas$arrecife
+#   )
+# 
+# ggplot(tsne_variables_ambientales,
+#   aes(x = V1, y = V2, colour = arrecife)) +
+#   geom_point()
+# # T-SNE no me sirve porque quiero distinguir entre si un arrecife está lejos
+# # de otros, no cerca.
+```
+
+```{r, warning=FALSE, message=FALSE}
 # Ajuste de primeros modelos predictivos:
 # 1. Random Forest, sin tomar en cuenta autocorrelación espacial.
 # 2. Usando todas las variables, y luego quitando latitud y longitud
@@ -631,23 +784,20 @@ ggplot(data = df_plot_2010, aes(x = cat_cobertura_acropora_4, y = valor)) +
 
 set.seed(12345)
 
+# En "df_trabajo_2010_variables_selectas" ya se filtraron registros con NA's
 y_regresion <- df_trabajo_2010_variables_selectas %>%
-  filter(complete.cases(.)) %>%
   '$'(., cobertura_acropora)
 
 y_clasificacion_2 <- df_trabajo_2010_variables_selectas %>%
-  filter(complete.cases(.)) %>%
   '$'(., cat_cobertura_acropora_2)
 
 y_clasificacion_4 <- df_trabajo_2010_variables_selectas %>%
-  filter(complete.cases(.)) %>%
   '$'(., cat_cobertura_acropora_4)
 
 # Primer round: todas las variables vs "y_regresion", "y_clasificacion_2" y
 # "y_clasificacion_4"
 
 x1 <- df_trabajo_2010_variables_selectas %>%
-  filter(complete.cases(.)) %>%
   select(
     latitud:WV2_2010_4_sd_ponderada
   )
@@ -672,7 +822,6 @@ rf_1_clasificacion_4 <- randomForest(x = x1, y = y_clasificacion_4,
 
 # x1 sin latitud ni longitud
 x2 <- df_trabajo_2010_variables_selectas %>%
-  filter(complete.cases(.)) %>%
   select(
     profundidad_media_m:WV2_2010_4_sd_ponderada
   )
@@ -753,7 +902,6 @@ variables_importantes_exactitud <- df_variables_importantes %>%
 # - WV2_2010_4_media_ponderada
 
 x3 <- df_trabajo_2010_variables_selectas %>%
-  filter(complete.cases(.)) %>%
   select(
     WV2_2010_1_sd_ponderada,
     WV2_2010_4_sd_ponderada,
@@ -771,10 +919,493 @@ varImpPlot(rf_3_clasificacion_2)
 ```
 
 ```{r, warning=FALSE, message=FALSE}
-# Validación cruzada espacial
+## Validación cruzada espacial
 
+# # Explorando las variables naturales que podrían ser factores para la VC espacial
+# df_trabajo_2010_variables_selectas %>%
+#   group_by(parche) %>%
+#   tally() %>%
+#   arrange(desc(n)) %>%
+#   View()
+# # Son muy poco homogéneos los parches en cantidad de puntos, por ello, se debe
+# # hacer el promedio _ponderado_ de los errores de CV para calcular el error CV.
+# # Pero esto es un problema que puede tender a inflar el error de CV: suponer que
+# # se tienen 100 datos y dos particiones, de 90 y 10 datos respectivamente.
+# # Si hacemos lo anterior, entrenamos con 90, predecimos con 10 y esta estimación
+# # con un modelo "bien" ajustado pesa poco, pero la contraria: entrenar con 10 y
+# # predecir con 90 es una estimación con un modelo mal ajustado que pesa mucho.
+# 
+# df_trabajo_2010_variables_selectas %>%
+#   group_by(arrecife) %>%
+#   tally() %>%
+#   arrange(desc(n)) %>%
+#   View()
+# # También muy poco uniformes.
+# 
+# # Generando la partición espacial del conjunto de datos y visualizándola
+# kfolds_kmeans <- partition.kmeans(df_trabajo_2010_variables_selectas,
+#   coords = c("latitud", "longitud"),
+#   nfold = 10,
+#   repetition = 1:1,
+#   seed1 = 12345,
+#   balancing.steps = 150)
+# plot(kfolds_kmeans, df_trabajo_2010_variables_selectas,
+#   coords = c("latitud","longitud"))
+# # Usando K-means CV tampoco da k-folds del mismo tamaño...
+
+# Mejor usaré cuartiles, quintiles y deciles de latitud.
 ```
+
+```{r, warning=FALSE, message=FALSE}
+
+# Creando la fórmula:
+formula <- paste0("cat_cobertura_acropora_2 ~ ",
+  colnames(
+    df_trabajo_2010_variables_selectas %>%
+      select(
+        aspecto_media_ponderada:WV2_2010_4_sd_ponderada
+        )
+  ) %>%
+  paste0(collapse = " + ")) %>%
+  as.formula()
+
+### CV con quintiles
+
+# Haciendo la validación cruzada especificando:
+# - El dataset
+# - Las variables de entrada y salida (fórmula)
+# - La manera de crear los folds (además de cuántos)
+# - La función de entrenamiento
+# - la función de predicción
+
+# Haciendo 100 repeticiones con de la VC, para evaluar si hay evidencia de que
+# corrige autocorrelación espacial. Si así es, se espera que la densidad del
+# error en cada fold espacial sea parecida.
+
+# Si un fold resulta muy bien predicho, y esto coincide con un fold al que pertenecen no todos los datos de un arrecife, hay algo raro.
+
+# Esto NO es cierto, lo que estas modas pueden indicar es la presencia de agregados
+# (arrecifes u otro nivel), cuyas cobertura de acrópora palmata sigue patrones
+# similares ante distintas variables captadas mediante percepción remota
+# (puesto que autocorrelación espacial se está controlando a nivel, por ejemplo,
+# de Limones al segmentarlo en distintos folds).
+
+# Que haya folds muy mal predichos podría deberse a que es necesario hacer
+# el análisis por agregados para mejorar la predicción.
+
+# Esto sugiere un siguiente paso para este análisis: encontrar dichos agregados
+# (Limones parece ser un caso promisorio), predecir la cobertura de coral mediante
+# variables satelitales, evaluar el desempeño de este método en distintas fechas
+# y con datos de campo apropiados, Si la predicción es promisoria, y las variables
+# importantes se mantienen, se podría ir pensando en un método de homologación de
+# imágenes satelitales para predecir con ellas y tener una manera de monitorear
+# el arrecife reduciendo la cantidad de trabajo de campo realizado.
+
+# Es una buena noticia encontrar estos agregados, porque quiere decir que la
+# predicción se puede mejorar mucho a esos niveles, que la predicción global que
+# se presenta en este artículo
+
+# parsperrorest ya no jala con el nuevo R.
+set.seed(12345)
+cv_cat_latitud_5_rep_500 <- sperrorest(
+  formula,
+  data = df_trabajo_2010_variables_selectas,
+  coords = c("longitud", "latitud"),
+  model.fun = randomForest,
+  pred.fun = predict,
+  smp.fun = partition.factor,
+  # La diferencia entre "partition.factor" y "partition.factor.cv" es que
+  # la segunda toma folds como agregados aleatorios de la partición por
+  # factores y la primera lo hace directamente sobre ésta.
+  smp.args = list(
+    fac = df_trabajo_2010_variables_selectas$cat_latitud_5,
+    repetition = 1:500),
+  # Para la paralelización, que ya no jala
+  # par.args = list(
+  #   par.units = 4,
+  #   par.mode = 1),
+  error.fold = TRUE,
+  error.rep = TRUE,
+  benchmark = TRUE,
+  progress = 1)
+saveRDS(cv_cat_latitud_5_rep_500, "../../productos/cv_cat_latitud_5_rep_500.RData")
+cv_cat_latitud_5_rep_500 <- readRDS("../../productos/cv_cat_latitud_5_rep_500.RData")
+
+# Revisando resultados
+
+# Generales
+summary(cv_cat_latitud_5_rep_500)
+
+# Viendo la estructura para obtener el error
+#str(cv_cat_latitud_5_rep_500, max.level = 2)
+
+summary(cv_cat_latitud_5_rep_500$error.rep)
+# Le va ligeramente mejor que a un modelo aleatorio:
+# test.accuracy        0.5485502
+
+#summary(cv_cat_latitud_5_rep_500$error.fold)
+exactitudes_fold_latitud_5_rep_500 <-
+  data_frame(
+    exactitud = ((cv_cat_latitud_5_rep_500$error.fold %>%
+        flatten() %>%
+        transpose())[["test"]] %>%
+        transpose())[["accuracy"]] %>%
+      as.numeric()
+  ) %>%
+  mutate(
+    nombre = rep(1:5, 500) %>%
+      as.character()
+  )
+
+# Ploteando errores por fold.
+ggplot(exactitudes_fold_latitud_5_rep_500,
+  aes(x = exactitud, group = nombre, fill = nombre)) +
+  geom_histogram(position = "identity", alpha = 0.7)
+
+# Ver el caso de Limones, que existan sus datos en dos folds distintos y que
+# se hayan predicho tan bien (relativamente), aún controlando por autocorrelación
+# espacial dentro del mismo, sugiere que hay una posible relación entre variables
+# satelitales y categorías de porcentaje de cobertura para ciertos agregados, que
+# merece ser explotada.
+k_folds_cat_latitud_5 <- partition.factor(df_trabajo_2010_variables_selectas, fac = df_trabajo_2010_variables_selectas$cat_latitud_5, repetition = 1:1)
+
+plot(k_folds_cat_latitud_5, df_trabajo_2010_variables_selectas,
+  coords = c("longitud","latitud"))
+
+# Tabla de número de puntos por arrecife y 5-categoría de latitud.
+df_trabajo_2010_variables_selectas %>%
+  group_by(arrecife, cat_latitud_5) %>%
+    # Obteniendo la media de la latitud dentro de cada grupo para ordenarlos por latitud
+    summarise(
+      latitud_media = mean(latitud),
+      n = n()
+    ) %>%
+  arrange(latitud_media)
+# Se ve como las clases 4 y 5, que son las que comparten muchos puntos de limones 
+# son las mejor clasificadas.
+
+### CV con deciles
+
+set.seed(12345)
+cv_cat_latitud_10_rep_500 <- sperrorest(
+  formula,
+  data = df_trabajo_2010_variables_selectas,
+  coords = c("longitud", "latitud"),
+  model.fun = randomForest,
+  pred.fun = predict,
+  smp.fun = partition.factor,
+  # La diferencia entre "partition.factor" y "partition.factor.cv" es que
+  # la segunda toma folds como agregados aleatorios de la partición por
+  # factores y la primera lo hace directamente sobre ésta.
+  smp.args = list(
+    fac = df_trabajo_2010_variables_selectas$cat_latitud_10,
+    repetition = 1:500),
+  # Para la paralelización
+  par.args = list(
+    par.units = 4,
+    par.mode = 1),
+  error.fold = TRUE,
+  error.rep = TRUE,
+  benchmark = TRUE,
+  progress = 1)
+saveRDS(cv_cat_latitud_10_rep_500, "../../productos/cv_cat_latitud_10_rep_500.RData")
+cv_cat_latitud_10_rep_500 <- readRDS("../../productos/cv_cat_latitud_10_rep_500.RData")
+
+# Revisando resultados
+
+# Generales
+summary(cv_cat_latitud_10)
+
+# Viendo la estructura para obtener el error
+#str(cv_cat_latitud_10, max.level = 2)
+
+summary(cv_cat_latitud_10$error.rep)
+# Le va ligeramente mejor que a un modelo aleatorio:
+# test.accuracy        0.5485502
+
+#summary(cv_cat_latitud_10$error.fold)
+exactitudes_fold_latitud_10_rep_500 <-
+  data_frame(
+    exactitud = ((cv_cat_latitud_10$error.fold %>%
+        flatten() %>%
+        transpose())[["test"]] %>%
+        transpose())[["accuracy"]] %>%
+      as.numeric()
+  ) %>%
+  mutate(
+    nombre = rep(1:10, 100) %>%
+      as.character()
+  )
+
+# Ploteando errores por fold.
+ggplot(exactitudes_fold_latitud_10_rep_500,
+  aes(x = exactitud, group = nombre, fill = nombre)) +
+  geom_histogram(position = "identity", alpha = 0.7)
+
+k_folds_cat_latitud_10 <- partition.factor(df_trabajo_2010_variables_selectas, repetition = 1:1, fac = "cat_latitud_10")
+
+plot(k_folds_cat_latitud_10, df_trabajo_2010_variables_selectas,
+  coords = c("longitud","latitud"))
+
+# Tabla de número de puntos por arrecife y 5-categoría de latitud.
+df_trabajo_2010_variables_selectas %>%
+  group_by(arrecife, cat_latitud_10) %>%
+    # Obteniendo la media de la latitud dentro de cada grupo para ordenarlos por latitud
+    summarise(
+      latitud_media = mean(latitud),
+      n = n()
+    ) %>%
+  arrange(latitud_media)
+
+# Frecuencias "cat_latitud_10" vs "cat_cobertura_acropora_2"
+table(df_trabajo_2010_variables_selectas$cat_latitud_10, 
+  df_trabajo_2010_variables_selectas$cat_cobertura_acropora_2)
+
+# Frecuencias "arrecife" vs "cat_cobertura_acropora_2"
+table(df_trabajo_2010_variables_selectas$arrecife, 
+  df_trabajo_2010_variables_selectas$cat_cobertura_acropora_2)
+
+# Nuevamente se ve cómo Limones, que ahora corresponde a 3 folds, es el que "salva"
+# al modelo. La prominencia de Limones puede deberse a que tiene tantos puntos, que
+# ese "agregado" puede ser muy bien representado en el modelo de predicción.
+
+### CV con cuartiles
+
+set.seed(12345)
+cv_cat_latitud_4_rep_500 <- sperrorest(
+  formula,
+  data = df_trabajo_2010_variables_selectas,
+  coords = c("longitud", "latitud"),
+  model.fun = randomForest,
+  pred.fun = predict,
+  smp.fun = partition.factor,
+  # La diferencia entre "partition.factor" y "partition.factor.cv" es que
+  # la segunda toma folds como agregados aleatorios de la partición por
+  # factores y la primera lo hace directamente sobre ésta.
+  smp.args = list(
+    fac = df_trabajo_2010_variables_selectas$cat_latitud_4,
+    repetition = 1:500),
+  # Para la paralelización
+  # par.args = list(
+  #   par.units = 4,
+  #   par.mode = 1),
+  error.fold = TRUE,
+  error.rep = TRUE,
+  benchmark = TRUE,
+  progress = 1)
+
+# Revisando resultados
+
+# Generales
+summary(cv_cat_latitud_4_rep_500)
+
+# Viendo la estructura para obtener el error
+#str(cv_cat_latitud_10, max.level = 2)
+
+summary(cv_cat_latitud_4_rep_500$error.rep)
+# Le va ligeramente mejor que a un modelo aleatorio:
+# test.accuracy        0.5214041
+
+#summary(cv_cat_latitud_4_rep_500$error.fold)
+exactitudes_fold_latitud_4_rep_500 <-
+  data_frame(
+    exactitud = ((cv_cat_latitud_4_rep_500$error.fold %>%
+        flatten() %>%
+        transpose())[["test"]] %>%
+        transpose())[["accuracy"]] %>%
+      as.numeric()
+  ) %>%
+  mutate(
+    nombre = rep(1:4, 100) %>%
+      as.character()
+  )
+
+# Ploteando errores por fold.
+ggplot(exactitudes_fold_latitud_4_rep_500,
+  aes(x = exactitud, group = nombre, fill = nombre)) +
+  geom_histogram(position = "identity", alpha = 0.7)
+
+k_folds_cat_latitud_4 <- partition.factor(df_trabajo_2010_variables_selectas, repetition = 1:1, fac = "cat_latitud_4")
+
+plot(k_folds_cat_latitud_4, df_trabajo_2010_variables_selectas,
+  coords = c("longitud","latitud"))
+
+# Tabla de número de puntos por arrecife y 4-categoría de latitud.
+df_trabajo_2010_variables_selectas %>%
+  group_by(arrecife, cat_latitud_4) %>%
+    # Obteniendo la media de la latitud dentro de cada grupo para ordenarlos por latitud
+    summarise(
+      latitud_media = mean(latitud),
+      n = n()
+    ) %>%
+  arrange(latitud_media)
+
+# Frecuencias "cat_latitud_10" vs "cat_cobertura_acropora_2"
+table(df_trabajo_2010_variables_selectas$cat_latitud_4, 
+  df_trabajo_2010_variables_selectas$cat_cobertura_acropora_2)
+
+# Frecuencias "arrecife" vs "cat_cobertura_acropora_2"
+table(df_trabajo_2010_variables_selectas$arrecife, 
+  df_trabajo_2010_variables_selectas$cat_cobertura_acropora_2)
+
+# Nuevamente se ve cómo Limones, que ahora corresponde a 3 folds, es el que "salva"
+# al modelo. La prominencia de Limones puede deberse a que tiene tantos puntos, que
+# ese "agregado" puede ser muy bien representado en el modelo de predicción.
+```
+
+```{r, warning=FALSE, message=FALSE}
+# cv_k_folds_cat_latitud_5_importancia_variables <- parsperrorest(
+#   formula,
+#   data = df_trabajo_2010_variables_selectas,
+#   coords = c("longitud", "latitud"),
+#   model.fun = randomForest,
+#   pred.fun = predict,
+#   smp.fun = partition.factor.cv,
+#   smp.args = list(
+#     fac = "cat_latitud_5",
+#     repetition = 1:4,
+#     nfold = 5,
+#     seed1 = 123),
+#   par.args = list(
+#     par.units = 4,
+#     par.mode = 1),
+#   error.fold = TRUE,
+#   error.rep = TRUE,
+#   err.train = TRUE, # por curiosidad
+#   benchmark = TRUE,
+#   importance = TRUE, # muy tardada, pero útil.
+#   imp.permutations = 200,
+#   progress = 1)
+# saveRDS(cv_k_folds_cat_latitud_5_importancia_variables,
+# "../../productos/cv_k_folds_cat_latitud_5_importancia_variables.RData")
+cv_k_folds_cat_latitud_5_importancia_variables <-
+  readRDS("../../productos/cv_k_folds_cat_latitud_5_importancia_variables.RData")
+
+# Viendo las variables más importantes:
+summary(cv_k_folds_cat_latitud_5_importancia_variables$importance) %>%
+  mutate(
+    variables = row.names(.)
+  ) %>%
+  select(
+    variables,
+    everything()
+  ) %>%
+  arrange(desc(mean.error)) %>%
+  select(
+    variables,
+    mean.error
+  )
+
+# Vector con las 1000 exactitudes para graficar su distribución vs la de un modelo aleatorio
+exactitudes_cv_k_folds_cat_latitud_5 <- cv_k_folds_cat_latitud_5$error.rep$test.accuracy
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Prueba rápida con un modelo al azar:
+# nrow(df_trabajo_2010_variables_selectas) # 876
+# Simulemos la distribución del ECM al correr 1000 simulaciones de un etiquetado
+# al azar de 876 registros (cantidad clasificada con Validación Cruzada)
+# Sabemos que el modelo al azar sería la opción trivial más acertada puesto que
+# hay la misma cantidad de registros con en cada categoría (por lo que no se puede,
+# usar la moda, a diferencia si, por ejemplo, una categoría tuviera 90 registros y
+# otra 10.
+
+simulacion_error_azar <- ldply(1:10000, function(i){
+  # TRUE: bien clasificado, FALSE: mal clasificado.
+  muestra <- sample(x = c(TRUE, FALSE),
+    size = nrow(df_trabajo_2010_variables_selectas),
+    replace = TRUE,
+    prob = c(0.5, 0.5))
+  
+  resultado <- data_frame(
+    i = i,
+    clasificacion_correcta = muestra
+    )
+  return(resultado)
+  }) %>%
+  group_by(i) %>%
+  summarise(
+    porcentaje_exito = sum(clasificacion_correcta)/n()
+  ) %>%
+  ungroup()
+
+plot_distribuciones_aleatorio_rf <- simulacion_error_azar %>%
+  mutate(
+    tipo = "Clasificación al azar"
+  ) %>%
+  union(
+    data_frame(
+      i = 1:length(exactitudes_cv_k_folds_cat_latitud_5),
+      porcentaje_exito = exactitudes_cv_k_folds_cat_latitud_5,
+      tipo = "RandomForest variables satelitales"
+    )
+  )
+
+ggplot(plot_distribuciones_aleatorio_rf,
+  aes(x = porcentaje_exito, fill = tipo, group = tipo)) +
+  geom_histogram(position="identity", alpha = 0.8)
+
+ggplot(plot_distribuciones_aleatorio_rf,
+  aes(x = tipo, y = porcentaje_exito)) +
+  geom_boxplot()
+
+# Calculando el p-value del percentil 5 de "RandomForest variables satelitales"
+# con respecto a "Clasificación al azar"
+percentil_5 <- quantile(exactitudes_cv_k_folds_cat_latitud_5, probs = 0.05)
+p_value <- simulacion_error_azar %>%
+  filter_(paste0("porcentaje_exito >= ", percentil_5)) %>%
+  summarise(
+    p_value = n()/nrow(simulacion_error_azar)
+  ) %>%
+  '$'(., p_value)
+```
+
+Conclusiones:
+- Limones se comporta "diferente" a los otros arrecifes (ver 4-fold vs 5/10 fold),
+- Sin embargo, aún controlando por autocorrelación espacial, Limones posiblemente pueda considerarse como un "agregado" cuyas cobertura de acrópora se pueda estimar
+razonablemente bien mediante imágenes satelitales, al hacer un análisis específico
+para él.
+- Se puede buscar la existencia de otros agregados.
+- Si todo sale bien (se encuentran agregados con la misma relación entre variables de percepción remota y cobertura de acrópora, al controlar la autocorrelación espacial), se podría entrenar un modelo para cada uno de ellos en determinada fecha, validarlo sobre distintos fechas con datos de campo (homologando variables satelitales), y si pasa las validaciones, usarlo para predecir cobertura de
+acrópora mediante imágenes satelitales.
+- Controlar por autocorrelación espacial es muy necesario para la generalización
+de los modelos (si no lo hacemos, quién nos asegura que nuestro modelo predice
+cobertura muy bien porque "delineó" los cuadritos existentes de cobertura, ¿y en
+realidad está usando la información espacial para estimar latitud y longitud?)
+
+Pasos futuros a considerar:
+- Considerar el aspecto como una variable circular 0º = 360º, en especial para
+ calcular su media y desviación estándar, que se ve que es una variable potencialmente significativa.
+ - Usar features para hacer deep learning (ajuste de redes neuronales convolucionadas).
+ - Hablar con expertos para que probar otras variables remotas potencialmente útiles
+ para la predicción de A. palmata.
+
 Sergio:
 1. Me ofrece los viáticos del Mau.
 2. Por experiencia del Mau, me va a estar fregando por eso para siempre. Es un anzuelo.
 3. Mejor le digo a Lorenzo que si me consigue para el avión y lo que sea para la comida ya la armamos.
+```{r}
+# Haciendo 10000 repeticiones de la validación cruzada para obtener la distribución del error
+# Las repeticiones son paralelizadas en los 4 núcleos de la compu.
+cv_k_folds_cat_latitud_5 <- parsperrorest(
+  formula,
+  data = df_trabajo_2010_variables_selectas,
+  coords = c("longitud", "latitud"),
+  model.fun = randomForest,
+  pred.fun = predict,
+  smp.fun = partition.factor.cv,
+  smp.args = list(
+    fac = "cat_latitud_5",
+    repetition = 1:10000,
+    nfold = 5,
+    seed1 = 123),
+  par.args = list(
+    par.units = 4,
+    par.mode = 1),
+  error.fold = TRUE,
+  error.rep = TRUE,
+  benchmark = TRUE,
+  progress = 1)
+# saveRDS(cv_k_folds_cat_latitud_5,
+#   "../../productos/cv_k_folds_cat_latitud_5.RData")
+```
