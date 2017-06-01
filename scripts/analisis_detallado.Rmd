@@ -102,11 +102,93 @@ library("matrixStats")
 # Para ajustar RandomForest
 library("randomForest")
 
-# Para hacer Validación Cruzada espacial
-# lo estoy instalando de mi Github: lo tuve que parchar porque está inestable
-# library("devtools")
-# install_github("fpardourrutia/sperrorest@object-incompatibility")
-library("sperrorest")
+# Para procesar en paralelo la función "validacion_cruzada_por_segmentos"
+library("doMC")
+# Registrando número de núcleos
+registerDoMC(4)
+
+
+# Declarando la función para realizar la validación cruzada por segmentos
+# df: un data frame con la información de las variables de entrada, la
+# de salida, y la variable de segmentación con la que se realizará la
+# validación cruzada por segmentos (folds).
+# nombre_variable_secgmentacion: un string con el nombre de dicha variable.
+# formula_prediccion: un objeto tipo fórmula, por ejemplo: y ~ x1 + x2,
+# donde y es la variable de salida y x'i son las variables de entrada.
+# num_iteraciones: número de veces que se repetirá la validación cruzada
+# (cada etapa comprende el número de folds)
+
+# Por ahora se utiliza randomForest y el error se mide como proporción de datos
+# mal clasificados (sólo implementada para clasificación). Se está suponiendo
+# que cada segmento tiene la misma cantidad de observaciones, por facilidad.
+
+validacion_cruzada_por_segmentos <- function(df, nombre_variable_segmentacion, formula_prediccion, num_iteraciones){
+  
+  # Función que permite calcular el error de validación cruzada al predecir sobre
+  # un segmento (fold) de los datos, entrenando sobre los anteriores.
+  # Segmento es un string con el valor de la variable de segmentación sobre el que
+  # se realizará la predicción, los otros datos serán de entrenamiento
+  # La función regresa un df con el nombre del segmento y el error de entrenamiento correspondiente.
+  calcula_error_segmento <- function(segmento, df, nombre_variable_segmentacion, formula_prediccion){
+    
+    # Creando conjunto de entrenamiento
+    condicion_filtro_entrenamiento <- paste0(nombre_variable_segmentacion,
+      " != \"", segmento, "\"")
+    set_entrenamiento <- df %>%
+      filter_(condicion_filtro_entrenamiento)
+    
+    # Creando conjunto de prueba
+    condicion_filtro_prueba <- paste0(nombre_variable_segmentacion,
+      " == \"", segmento, "\"")
+    set_prueba <- df %>%
+      filter_(condicion_filtro_prueba)
+    
+    # Ajustando modelo predictivo con los datos de entrenamiento:
+    rf <- randomForest(formula_prediccion, set_entrenamiento)
+    
+    # Obteniendo los valores de predicción para cada elemento en el set de
+    # prueba
+    predicciones_prueba <- predict(rf, set_prueba, type = "class")
+    
+    # Obteniendo variable de salida de la fórmula
+    y <- all.vars(formula_prediccion)[1]
+    
+    # Obteniendo el error de predicción para el segmento
+    error_segmento <- mean(predicciones_prueba != set_prueba[[y]])
+    
+    # Formando el resultado
+    resultado <- data_frame(
+      segmento = segmento,
+      error_segmento = error_segmento
+    )
+    
+    return(resultado)
+  }
+  
+  # Calculando los errores por segmento para todas las iteraciones de validación cruzada
+  errores <- ldply(1:num_iteraciones, function(i, df, nombre_variable_segmentacion, formula_prediccion, .parallel = TRUE){
+    
+    # Enlistando los distitos segmentos de "df"" de acuerdo a "nombre_variable_segmentacion"
+    segmentos <- df[[nombre_variable_segmentacion]] %>%
+      unique() %>%
+      sort()
+    
+    #  Llamando la función "calcula_error_segmento" para todos los segmentos en el df.
+    errores_segmentos <- ldply(segmentos, calcula_error_segmento,
+      df, nombre_variable_segmentacion, formula_prediccion)
+    
+    # Generando el resultado correspondiente a la i-ésima iteración
+    resultado <- errores_segmentos %>%
+      mutate(
+        num_repeticion = i
+        ) %>%
+      select(
+        num_repeticion,
+        everything()
+      )
+  }, df, nombre_variable_segmentacion, formula_prediccion)
+}
+  
 ```
 
 ```{r, warning=FALSE, message=FALSE}
@@ -345,6 +427,7 @@ nrow(df_pixeles_desglosados)
 #       variables_stack <- c(
 #         "WV2_2010_1" = "WV2_2010_1",
 #         "WV2_2010_2" = "WV2_2010_2", # Muy correlacionada con WV2_2010_1
+#         "WV2_2010_3" = "WV2_2010_3", # Muy correlacionada con WV2_2010_1
 #         "WV2_2010_4" = "WV2_2010_4",
 #         "batimetria" = "batimetria",
 #         "pendiente" = "pendiente",
