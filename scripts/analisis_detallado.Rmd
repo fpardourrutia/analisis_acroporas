@@ -14,7 +14,7 @@ a su rango real.
 + Luego se exploraron dichos parches, y se seleccionaron los que en realidad tiene cubierta de acrópora para ser muestreados. Éstos se digitalizaron.
 
 + Utilizando la digitalización de los parches, se obtuvo una muestra aleatoria de
-sitios a visitar. La cantidad de sitios (r = 4m) en cada parche se seleccionó de
+sitios a visitar. La cantidad de sitios (r = 2m) en cada parche se seleccionó de
 manera que cubrieran el 10% del mismo. De esta manera, todos los puntos deben caer
 exactamente en cada parche del shape (al menos teóricamente.)
 
@@ -1236,7 +1236,6 @@ num_iteraciones <- 10000
 
 ### Corriendo la VC espacial para 4/5/10 clases de latitud
 
-## 4 clases:
 # cv_cat_latitud_4 <- validacion_cruzada_por_segmentos(
 #   df_trabajo_2010_variables_selectas,
 #   "cat_latitud_4",
@@ -1244,24 +1243,81 @@ num_iteraciones <- 10000
 #   num_iteraciones)
 # saveRDS(cv_cat_latitud_4, "../../productos/cv_cat_latitud_4.RData")
 
-cv_cat_latitud_4 <- readRDS("../../productos/cv_cat_latitud_4.RData")
+cv_cat_latitud_4 <- readRDS("../../productos/cv_cat_latitud_4.RData") %>%
+  mutate(
+    segmento = as.factor(segmento) %>%
+      # redefiniendo el primer elemento en los factores.
+      relevel("[20.86,20.88]")
+  )
+
+# cv_cat_latitud_5 <- validacion_cruzada_por_segmentos(
+#   df_trabajo_2010_variables_selectas,
+#   "cat_latitud_5",
+#   formula_prediccion,
+#   num_iteraciones)
+# saveRDS(cv_cat_latitud_5, "../../productos/cv_cat_latitud_5.RData")
+
+cv_cat_latitud_5 <- readRDS("../../productos/cv_cat_latitud_5.RData") %>%
+  mutate(
+    segmento = as.factor(segmento) %>%
+      # redefiniendo el primer elemento en los factores.
+      relevel("[20.855,20.874]")
+  )
+
+# cv_cat_latitud_10 <- validacion_cruzada_por_segmentos(
+#   df_trabajo_2010_variables_selectas,
+#   "cat_latitud_10",
+#   formula_prediccion,
+#   num_iteraciones)
+# saveRDS(cv_cat_latitud_10, "../../productos/cv_cat_latitud_10.RData")
+
+cv_cat_latitud_10 <- readRDS("../../productos/cv_cat_latitud_10.RData") %>%
+  mutate(
+    segmento = as.factor(segmento) %>%
+      # redefiniendo el primer elemento en los factores.
+      relevel("[20.855,20.869]")
+  )
 
 # Calculando la proporción de éxito de VC:
-exito_vc_cat_latitud_4 <- weighted.mean(cv_cat_latitud_4$exito_segmento,
-  cv_cat_latitud_4$n) #0.519145
-
-# Calculando las proporciónes de éxito por iteración, para graficarlos al
-# final contra una simulación de un clasificador aleatorio
-exito_iteracion_cat_latitud_4 <- cv_cat_latitud_4 %>%
-  group_by(num_iteracion) %>%
-  summarise(
-    exito = weighted.mean(exito_segmento, n)
-  )
+exito_vc_cat_latitud_4 <- weighted.mean(cv_cat_latitud_4$exito_prediccion,
+  cv_cat_latitud_4$n) #0.5193142
+exito_vc_cat_latitud_5 <- weighted.mean(cv_cat_latitud_5$exito_prediccion,
+  cv_cat_latitud_5$n) #0.5488043
+exito_vc_cat_latitud_10 <- weighted.mean(cv_cat_latitud_10$exito_prediccion,
+  cv_cat_latitud_10$n) #0.576338
 
 # Graficando las proporciones de exito por fold:
 ggplot(cv_cat_latitud_4,
-  aes(x = exito_segmento, fill = segmento, group = segmento)) +
+  aes(x = exito_prediccion, fill = segmento, group = segmento)) +
   geom_histogram(position = "identity", alpha = 0.8)
+ggplot(cv_cat_latitud_5,
+  aes(x = exito_prediccion, fill = segmento, group = segmento)) +
+  geom_histogram(position = "identity", alpha = 0.8)
+ggplot(cv_cat_latitud_10,
+  aes(x = exito_prediccion, fill = segmento, group = segmento)) +
+  geom_histogram(position = "identity", alpha = 0.8)
+
+# Obteniendo las proporciones medias de éxito por fold
+cv_cat_latitud_4 %>%
+  group_by(segmento) %>%
+  summarise(
+    exito_prediccion_promedio = mean(exito_prediccion)
+  )
+cv_cat_latitud_5 %>%
+  group_by(segmento) %>%
+  summarise(
+    exito_prediccion_promedio = mean(exito_prediccion)
+  )
+cv_cat_latitud_10 %>%
+  group_by(segmento) %>%
+  summarise(
+    exito_prediccion_promedio = mean(exito_prediccion)
+  )
+
+#  Ploteando los sitios por arrecife:
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = longitud, y = latitud, colour = arrecife)) +
+  geom_point()
 
 # Graficando los folds:
 ggplot(df_trabajo_2010_variables_selectas,
@@ -1271,41 +1327,6 @@ ggplot(df_trabajo_2010_variables_selectas,
     colour = cat_latitud_4
   )) +
   geom_point()
-
-# Tabla con número de puntos por categorñia de latitud y arrecife
-df_trabajo_2010_variables_selectas %>%
-  group_by(cat_latitud_4, arrecife) %>%
-  tally() %>%
-  arrange(cat_latitud_4, arrecife)
-
-## 5 clases:
-# cv_cat_latitud_5 <- validacion_cruzada_por_segmentos(
-#   df_trabajo_2010_variables_selectas,
-#   "cat_latitud_5",
-#   formula_prediccion,
-#   num_iteraciones)
-# saveRDS(cv_cat_latitud_5, "../../productos/cv_cat_latitud_5.RData")
-
-cv_cat_latitud_5 <- readRDS("../../productos/cv_cat_latitud_5.RData")
-
-# Calculando la proporción de éxito de VC:
-exito_vc_cat_latitud_5 <- weighted.mean(cv_cat_latitud_5$exito_segmento,
-  cv_cat_latitud_5$n)
-
-# Calculando las proporciónes de éxito por iteración, para graficarlos al
-# final contra una simulación de un clasificador aleatorio
-exito_iteracion_cat_latitud_5 <- cv_cat_latitud_5 %>%
-  group_by(num_iteracion) %>%
-  summarise(
-    exito = weighted.mean(exito_segmento, n)
-  )
-
-# Graficando las proporciones de exito por fold:
-ggplot(cv_cat_latitud_5,
-  aes(x = exito_segmento, fill = segmento, group = segmento)) +
-  geom_histogram(position = "identity", alpha = 0.8)
-
-# Graficando los folds:
 ggplot(df_trabajo_2010_variables_selectas,
   aes(
     x = longitud,
@@ -1313,60 +1334,6 @@ ggplot(df_trabajo_2010_variables_selectas,
     colour = cat_latitud_5
   )) +
   geom_point()
-
-# Tabla con número de puntos por categoría de latitud y arrecife
-df_trabajo_2010_variables_selectas %>%
-  group_by(cat_latitud_5, arrecife) %>%
-  tally() %>%
-  arrange(cat_latitud_5, arrecife)
-
-# Al calcular 4 vs 5 folds, podemos ver cómo la predicción para Limones y Manchones aumenta
-# considerablemente al pasar de 4 a 5, los efectos pueden deberse a distintas causas:
-# Para limones:
-# 1. Es posible que como la 4-CV, cuando tenía que entrenarpara predecir sobre el fold correspondiente a Limones, tenía una cantidad de datos insuficiente de datos de entrenamiento
-# (36 datos). Esto se sugiere con el hecho de que en los análisis exploratorios de variables
-# satelitales por arrecife, Limones, para algunas variables, alcanzaba rangos que los otros
-# arrecifes no. En esta línea, es de notar que para el fold 5, Limones queda mucho mejor
-# representado tanto en datos de entrenamiento como de prueba, y esto mejora la predicción sobre # éste.
-# 3. Sin embargo, algo que hay que notar es que al pasar de 4-CV a 5-CV5, la predicción sobre
-# Limones pasa a ser de la peor a la mejor, lo que sugiere que, aún controlando por
-# autocorrelación espacial sobre éste (puesto que con su parte "Sur" estamos prediciendo su
-# parte "Norte"), mejora mucho la predicción, lo que abre la pregunta de investigar si
-# existen "agregados" con distintas relaciones entre las variables satelitales y cobertura
-# de acrópora, y si convendría más realizar el análisis con estos agregados.
-
-# Nuevamente se ve cómo Limones, que ahora corresponde a 3 folds, es el que "salva"
-# al modelo. La prominencia de Limones puede deberse a que tiene tantos puntos, que
-# ese "agregado" puede ser muy bien representado en el modelo de predicción.
-
-## 10 clases:
-cv_cat_latitud_10 <- validacion_cruzada_por_segmentos(
-  df_trabajo_2010_variables_selectas,
-  "cat_latitud_10",
-  formula_prediccion,
-  num_iteraciones)
-saveRDS(cv_cat_latitud_10, "../../productos/cv_cat_latitud_10.RData")
-
-cv_cat_latitud_10 <- readRDS("../../productos/cv_cat_latitud_10.RData")
-
-# Calculando la proporción de éxito de VC:
-exito_vc_cat_latitud_10 <- weighted.mean(cv_cat_latitud_10$exito_prediccion,
-  cv_cat_latitud_10$n) #0.519145
-
-# Calculando las proporciónes de éxito por iteración, para graficarlos al
-# final contra una simulación de un clasificador aleatorio
-exito_iteracion_cat_latitud_10 <- cv_cat_latitud_10 %>%
-  group_by(num_iteracion) %>%
-  summarise(
-    exito = weighted.mean(exito_prediccion, n)
-  )
-
-# Graficando las proporciones de exito por fold:
-ggplot(cv_cat_latitud_10,
-  aes(x = exito_prediccion, fill = segmento, group = segmento)) +
-  geom_histogram(position = "identity", alpha = 0.8)
-
-# Graficando los folds:
 ggplot(df_trabajo_2010_variables_selectas,
   aes(
     x = longitud,
@@ -1375,11 +1342,47 @@ ggplot(df_trabajo_2010_variables_selectas,
   )) +
   geom_point()
 
-# Tabla con número de puntos por categorñia de latitud y arrecife
+# Tabla con número de puntos por categoría de latitud y arrecife
+df_trabajo_2010_variables_selectas %>%
+  group_by(cat_latitud_4, arrecife) %>%
+  tally() %>%
+  arrange(cat_latitud_4, arrecife)
+df_trabajo_2010_variables_selectas %>%
+  group_by(cat_latitud_5, arrecife) %>%
+  tally() %>%
+  arrange(cat_latitud_5, arrecife)
 df_trabajo_2010_variables_selectas %>%
   group_by(cat_latitud_10, arrecife) %>%
   tally() %>%
   arrange(cat_latitud_10, arrecife)
+
+# Intervalos de 5%:
+# |-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+# |-1-|-2-|-3-|-4-|-5-|-6-|-7-|-8-|-9-|-0-| (deciles)
+# |----A----|----B----|----C----|----D----| (cuartiles)
+
+# Al comparar como desciende la capacidad predictiva para el primer fold, al pasar de 4 a 5 folds 
+# de VC parece que el asentamiento de las poblaciones de acrópora en cierta sección de Bocana y
+# Picudas difiere de otra de Bocana y Puerto Morelos, por lo que convendría analizar estos dos
+# estratos de manera distinta. Además, comparando con CV 10-fold, que vuelve a subir al incorporar
+# más información de la parte Sur de Bocana en el set de entrenamiento, refuerza la evidencia a favor
+# del uso de estratos para mejorar el poder predictivo de un modelo.
+
+# Con respecto a Limones, se tiene evidencia de que puede constituir otro estrato, pues existe una
+# diferencia entre predecir sobre él con 4 a 5 fold (sólo 5% de diferencia en cantidad de datos),
+# pero este 5% son datos de Limones sólamente. Además, al comparar con el 10-fold, vemos que la sección
+# de latitud media de Limones, que presenta menor cobertura que los extremos, es predicha igual de
+# bien que las otras, lo que sugiere que las variables satelitales no están siendo utilizadas
+# simplemente como un proxy de un gradiente latitudinal, sino que son predictoras por sí mismas.
+# Además, las variables de PR en Limones alcanzan rangos que difícilmente se ven en otros arrecifes.
+
+# Con respecto a los 10-folds 3, 4 y 5, que prácticamente coinciden con el segundo 4-fold, se ve que
+# el éxito de predicción no cambia mucho si los incorporamos o no, lo que sugiere que los arrecifes
+# de norte de Bocada/Picudas, Punta Caracol/Tanchacté y Cuevones se podrían considerar como estratos distintos. Habría que investigar si no es necesaria mayor estratificación.
+# considerar como estratos distintos los arrecifes de picudas
+
+# Para los otros segmentos (arrecifes herradura a manchones) la evidencia no es tan clara, sin embargo,
+# la técnica de predicción por estratos parece promisoria y merecedora de estudios futuros.
 ```
 
 ```{r, warning=FALSE, message=FALSE}
@@ -1391,6 +1394,24 @@ df_trabajo_2010_variables_selectas %>%
 # hay la misma cantidad de registros con en cada categoría (por lo que no se puede,
 # usar la moda, a diferencia si, por ejemplo, una categoría tuviera 90 registros y
 # otra 10.
+
+# Calculando las proporciónes de éxito por iteración, para graficarlas 
+# contra una simulación de un clasificador aleatorio
+exito_iteracion_cat_latitud_4 <- cv_cat_latitud_4 %>%
+  group_by(num_iteracion) %>%
+  summarise(
+    exito = weighted.mean(exito_prediccion, n)
+  )
+exito_iteracion_cat_latitud_5 <- cv_cat_latitud_5 %>%
+  group_by(num_iteracion) %>%
+  summarise(
+    exito = weighted.mean(exito_prediccion, n)
+  )
+exito_iteracion_cat_latitud_10 <- cv_cat_latitud_10 %>%
+  group_by(num_iteracion) %>%
+  summarise(
+    exito = weighted.mean(exito_prediccion, n)
+  )
 
 simulacion_error_azar <- ldply(1:10000, function(i){
   # TRUE: bien clasificado, FALSE: mal clasificado.
@@ -1430,11 +1451,20 @@ plot_distribuciones_aleatorio_rf <- simulacion_error_azar %>%
         porcentaje_exito = exito,
         tipo = "RF variables satelitales 5-fold CV"
       )
+    ) %>%
+    union(
+    exito_iteracion_cat_latitud_10 %>%
+      transmute(
+        i = num_iteracion,
+        porcentaje_exito = exito,
+        tipo = "RF variables satelitales 10-fold CV"
+      )
     )
+
 
 ggplot(plot_distribuciones_aleatorio_rf,
   aes(x = porcentaje_exito, fill = tipo, group = tipo)) +
-  geom_histogram(position="identity", alpha = 0.8)
+  geom_histogram(position="identity", alpha = 0.6)
 
 ggplot(plot_distribuciones_aleatorio_rf,
   aes(x = tipo, y = porcentaje_exito)) +
@@ -1443,13 +1473,6 @@ ggplot(plot_distribuciones_aleatorio_rf,
 # Calculando p-values de la media de cada distribución
 # con respecto a "Clasificación al azar"
 #percentil_5_cat_latitud_5 <- quantile(exito_iteracion_cat_latitud_5$exito, probs = 0.05)
-p_value_cat_latitud_5 <- simulacion_error_azar %>%
-  filter_(paste0("porcentaje_exito >= ", mean(exito_iteracion_cat_latitud_5$exito))) %>%
-  summarise(
-    p_value = n()/nrow(simulacion_error_azar)
-  ) %>%
-  '$'(., p_value)
-
 p_value_cat_latitud_4 <- simulacion_error_azar %>%
   filter_(paste0("porcentaje_exito >= ", mean(exito_iteracion_cat_latitud_4$exito))) %>%
   summarise(
@@ -1457,6 +1480,19 @@ p_value_cat_latitud_4 <- simulacion_error_azar %>%
   ) %>%
   '$'(., p_value)
 
+p_value_cat_latitud_5 <- simulacion_error_azar %>%
+  filter_(paste0("porcentaje_exito >= ", mean(exito_iteracion_cat_latitud_5$exito))) %>%
+  summarise(
+    p_value = n()/nrow(simulacion_error_azar)
+  ) %>%
+  '$'(., p_value)
+
+p_value_cat_latitud_10 <- simulacion_error_azar %>%
+  filter_(paste0("porcentaje_exito >= ", mean(exito_iteracion_cat_latitud_10$exito))) %>%
+  summarise(
+    p_value = n()/nrow(simulacion_error_azar)
+  ) %>%
+  '$'(., p_value)
 ```
 
 ```{r, warning=FALSE, message=FALSE}
@@ -1538,31 +1574,17 @@ Pasos futuros a considerar:
  n).
  Se podría escoger una buena estratificación mediante validación cruzada.
  
+Presentación:
+1. Método
+2. Histogramas de éxito de predicción vs error aleatorio.
+3. Presentación del análisis por fold, conclusiones sobre estratificación y nos
+quedamos con el mejor modelo 5-fold, descartando 4 fold por variables ambientales
+en Limones.
+4. Presentación de p-value e importancia de variables.
 
 Sergio:
 1. Me ofrece los viáticos del Mau.
 2. Por experiencia del Mau, me va a estar fregando por eso para siempre. Es un anzuelo.
 3. Mejor le digo a Lorenzo que si me consigue para el avión y lo que sea para la comida ya la armamos.
-
-cv_cat_latitud_4 <- validacion_cruzada_por_segmentos(
-  df_trabajo_2010_variables_selectas,
-  "cat_latitud_4",
-  formula_prediccion,
-  num_iteraciones)
-cv_cat_latitud_5 <- validacion_cruzada_por_segmentos(
-  df_trabajo_2010_variables_selectas,
-  "cat_latitud_5",
-  formula_prediccion,
-  num_iteraciones)
-cv_cat_latitud_10 <- validacion_cruzada_por_segmentos(
-  df_trabajo_2010_variables_selectas,
-  "cat_latitud_10",
-  formula_prediccion,
-  num_iteraciones)
-saveRDS(cv_cat_latitud_4, "../../productos/cv_cat_latitud_4.RData")
-saveRDS(cv_cat_latitud_5, "../../productos/cv_cat_latitud_5.RData")
-saveRDS(cv_cat_latitud_10, "../../productos/cv_cat_latitud_10.RData")
-
-
 
 
