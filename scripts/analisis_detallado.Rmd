@@ -124,13 +124,48 @@ registerDoMC(4)
 
 validacion_cruzada_por_segmentos <- function(df, nombre_variable_segmentacion, formula_prediccion, num_iteraciones){
   
-  # Función que permite calcular el error de validación cruzada al predecir sobre
-  # un segmento (fold) de los datos, entrenando sobre los anteriores.
-  # Segmento es un string con el valor de la variable de segmentación sobre el que
-  # se realizará la predicción, los otros datos serán de entrenamiento
-  # La función regresa un df con el nombre del segmento, el número de elementos en
-  # el segmento y el error de entrenamiento correspondiente.
-  calcula_error_segmento <- function(segmento, df, nombre_variable_segmentacion, formula_prediccion){
+  # Función que permite calcular el error de predicción al entrenar un RandomForest
+  # especificado con una fórmula sobre un conjunto de entrenamiento y prediciendo
+  # sobre uno de prueba.
+  # La función regresa un df con el número de elementos en el set de prueba, así
+  # como las proporciones de error y éxito de predicción.
+  calcula_error_prediccion <- function(set_entrenamiento, set_prueba,
+    formula_prediccion){
+    
+    # Ajustando modelo predictivo con los datos de entrenamiento:
+    rf <- randomForest(formula_prediccion, set_entrenamiento)
+    
+    # Obteniendo los valores de predicción para cada elemento en el set de
+    # prueba
+    predicciones_prueba <- predict(rf, set_prueba, type = "class")
+    
+    # Obteniendo variable de salida de la fórmula
+    y <- all.vars(formula_prediccion)[1]
+    
+    # Obteniendo el error de predicción para el set de prueba
+    error_prediccion <- mean(predicciones_prueba != set_prueba[[y]])
+    
+    # Formando el resultado
+    resultado <- data_frame(
+      n = nrow(set_prueba),
+      error_prediccion = error_prediccion,
+      exito_prediccion = 1 - error_prediccion
+    )
+    
+    return(resultado)
+  }
+  
+  ## Creando lista con sets de entrenamiento y prueba a partir del "df" y el
+  ## "nombre_variable_segmentación". Esto por eficiencia, para no crearlas en cada
+  ## iteración
+  
+  # Enlistando los distitos segmentos de "df" de acuerdo a "nombre_variable_segmentacion"
+  segmentos <- df[[nombre_variable_segmentacion]] %>%
+    unique() %>%
+    sort()
+  
+  # Creando lista con conjuntos de entrenamiento y de prueba.
+  lista_sets_entrenamiento_prueba <- llply(segmentos, function(segmento, df, nombre_variable_segmentacion){
     
     # Creando conjunto de entrenamiento
     condicion_filtro_entrenamiento <- paste0(nombre_variable_segmentacion,
@@ -144,40 +179,28 @@ validacion_cruzada_por_segmentos <- function(df, nombre_variable_segmentacion, f
     set_prueba <- df %>%
       filter_(condicion_filtro_prueba)
     
-    # Ajustando modelo predictivo con los datos de entrenamiento:
-    rf <- randomForest(formula_prediccion, set_entrenamiento)
-    
-    # Obteniendo los valores de predicción para cada elemento en el set de
-    # prueba
-    predicciones_prueba <- predict(rf, set_prueba, type = "class")
-    
-    # Obteniendo variable de salida de la fórmula
-    y <- all.vars(formula_prediccion)[1]
-    
-    # Obteniendo el error de predicción para el segmento
-    error_segmento <- mean(predicciones_prueba != set_prueba[[y]])
-    
-    # Formando el resultado
-    resultado <- data_frame(
-      segmento = segmento,
-      n = nrow(set_prueba),
-      error_segmento = error_segmento
+    lista_sets <- list(
+      set_entrenamiento = set_entrenamiento,
+      set_prueba = set_prueba
     )
-    
-    return(resultado)
-  }
+      
+    return(lista_sets)
+  }, df, nombre_variable_segmentacion)
+  
+  # Nombrando los elementos de "lista_sets_entrenamiento_prueba" como los segmentos asociados a ellos:
+  names(lista_sets_entrenamiento_prueba) <- as.character(segmentos)
   
   # Calculando los errores por segmento para todas las iteraciones de validación cruzada
-  errores <- ldply(1:num_iteraciones, function(i, df, nombre_variable_segmentacion, formula_prediccion, .parallel = TRUE){
+  errores <- ldply(1:num_iteraciones, function(i, lista_sets_entrenamiento_prueba, formula_prediccion){
     
-    # Enlistando los distitos segmentos de "df"" de acuerdo a "nombre_variable_segmentacion"
-    segmentos <- df[[nombre_variable_segmentacion]] %>%
-      unique() %>%
-      sort()
-    
-    #  Llamando la función "calcula_error_segmento" para todos los segmentos en el df.
-    errores_segmentos <- ldply(segmentos, calcula_error_segmento,
-      df, nombre_variable_segmentacion, formula_prediccion)
+    #  Llamando la función "calcula_error_prediccion" para todos los elementos en "lista_sets_entrenamiento_prueba".
+    errores_segmentos <- ldply(lista_sets_entrenamiento_prueba, function(lista_sets, formula_prediccion){
+      error_segmento <- calcula_error_prediccion(lista_sets$set_entrenamiento,
+        lista_sets$set_prueba, formula_prediccion)
+      
+      return(error_segmento)
+      
+    }, formula_prediccion)
     
     # Generando el resultado correspondiente a la i-ésima iteración
     resultado <- errores_segmentos %>%
@@ -186,9 +209,12 @@ validacion_cruzada_por_segmentos <- function(df, nombre_variable_segmentacion, f
         ) %>%
       select(
         num_iteracion,
+        segmento = .id,
         everything()
       )
-  }, df, nombre_variable_segmentacion, formula_prediccion)
+    
+    return(resultado)
+  }, lista_sets_entrenamiento_prueba, formula_prediccion, .parallel = TRUE)
 }
   
 ```
@@ -707,6 +733,29 @@ df_plot_2010 <- df_trabajo_2010_variables_selectas %>%
   gather(llave, valor, latitud:WV2_2010_4_sd_ponderada)
 glimpse(df_plot_2010)
 
+# Primero que nada, haciendo el histograma de cobertura de acrópora para ver si
+# es continua o está "implícitamente categorizada" por tendencias a redondear los
+# datos de campo.
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = cobertura_acropora)) +
+  geom_histogram()
+# Claramente se ve el efecto por redondeo, tal vez salga mejor categorizando.
+
+# Cantidad de registros por arrecife:
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = reorder(arrecife, latitud_media_arrecife))) +
+  geom_bar() +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+    )
+
+#  Ploteando los sitios por arrecife:
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = longitud, y = latitud, colour = arrecife)) +
+  geom_point()
+
 # Perfilando las variables ambientales por arrecife:
 ggplot(data = df_plot_2010,
   aes(x = reorder(arrecife, latitud_media_arrecife), y = valor)) +
@@ -724,6 +773,69 @@ ggplot(data = df_plot_2010,
 # sube mucho el error de predicción para este arrecife, y apoya que nos quedemos con
 # una VC que imponga
 
+# Perfilando la cobertura por arrecife:
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = reorder(arrecife, latitud_media_arrecife), y = cobertura_acropora)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.3, size = 0.5) +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+    )
+
+# Perfilando las categorías de cobertura por arrecife cat 4:
+ggplot(data = df_trabajo_2010_variables_selectas %>%
+    # Quitando arrecifes con muy pocas observaciones.
+    group_by(arrecife) %>%
+    mutate(cuenta = n()) %>%
+    ungroup() %>%
+    filter(cuenta > 50),
+  aes(x = reorder(arrecife, latitud_media_arrecife),
+    fill = cat_cobertura_acropora_4)) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+    )
+# Limones tiene mayor proporción de sitios con cobertura entre 50 y 100,
+# y menor proporción con cobertura de [0, 15].
+# Puerto Morelos tiene mayor proporción con cobertura de [0, 15] y ninguno
+# con proporción de (50,100].
+# Se ve una ligera  tendencia latitudinal: a menor latitud, menor cobertura
+
+# Perfilando las categorías de cobertura por arrecife cat 2:
+ggplot(data = df_trabajo_2010_variables_selectas %>%
+    # Quitando arrecifes con muy pocas observaciones.
+    group_by(arrecife) %>%
+    mutate(cuenta = n()) %>%
+    ungroup() %>%
+    filter(cuenta > 50),
+  aes(x = reorder(arrecife, latitud_media_arrecife),
+    fill = cat_cobertura_acropora_2)) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+    )
+# La tendencia latitudinal es clara ahora...
+
+# Ploteando cobertura continua en el mapa
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = longitud, y = latitud, colour = cobertura_acropora)) +
+  geom_point(alpha = 0.3) +
+  scale_color_gradientn(colours = rainbow(5))
+# Parece confetti, se espera que ni la latitud y longitud solas expliquen bien la
+# cobertura de A. palmata
+
+# Ploteando cobertura discretizada a 2 clases en el mapa
+ggplot(data = df_trabajo_2010_variables_selectas, aes(x = longitud, y = latitud, colour = cat_cobertura_acropora_2)) +
+  geom_point(alpha = 0.3)
+# Se ve ligeramente la tendencia latitudinal
+
+# Diagramas de dispersión de varias variables contra cobertura de acrópora
 ggplot(data = df_plot_2010, aes(x = valor, y = cobertura_acropora)) +
   geom_point(alpha = 0.01) +
   geom_smooth() +
@@ -740,32 +852,8 @@ ggplot(data = df_plot_2010, aes(x = cobertura_acropora, y = valor)) +
 # hay algo, es muy débil para notarlo. Es decir, latitud y longitud son nuestras
 # mejores variables.
 
-#  Ploteando los sitios por arrecife:
-ggplot(data = df_trabajo_2010_variables_selectas,
-  aes(x = longitud, y = latitud, colour = arrecife)) +
-  geom_point()
-
-# Cobertura continua
-ggplot(data = df_trabajo_2010_variables_selectas,
-  aes(x = longitud, y = latitud, colour = cobertura_acropora)) +
-  geom_point(alpha = 0.5) +
-  scale_color_gradientn(colours = rainbow(5))
-# Parece confetti, se espera que ni la latitud y longitud solas expliquen bien la
-# cobertura de A. palmata
-
-# Cobertura discretizada a 2 clases
-ggplot(data = df_trabajo_2010_variables_selectas, aes(x = longitud, y = latitud, colour = cat_cobertura_acropora_2)) +
-  geom_point(alpha = 0.5)
-# Parece confetti, se espera que ni la latitud y longitud solas expliquen bien la
-# cobertura de A. palmata
-
-# No se aprecian tendencias lineales significativas, igual y las variables, en su
-# conjunto, y no suponiendo tendencias lineales, explican mejor la cobertura de
-# A pal.
-
 # Ahora perfilando las distintas variables por la categorización de la cobertura
 # de acrópora:
-
 ggplot(data = df_plot_2010, aes(x = cat_cobertura_acropora_2, y = valor)) +
   geom_boxplot() +
   geom_jitter(alpha = 0.03) +
@@ -777,6 +865,83 @@ ggplot(data = df_plot_2010, aes(x = cat_cobertura_acropora_4, y = valor)) +
   geom_jitter(alpha = 0.03) +
   facet_wrap(~llave, scales = "free", ncol = 2)
 # Se ven tendencias en "latitud", "longitud" y "aspecto_media_ponderada"
+
+
+df_plot_cat_latitud <- df_trabajo_2010_variables_selectas %>%
+  mutate(
+    cat_latitud_4 = as.character(cat_latitud_4),
+    cat_latitud_5 = as.character(cat_latitud_5),
+    cat_latitud_10 = as.character(cat_latitud_10)
+  ) %>%
+  gather(cat_latitud, intervalo, cat_latitud_4, cat_latitud_5, cat_latitud_10) %>%
+  # Calculando latitud media por intervalo para plotearlos en orden
+  group_by(intervalo) %>%
+  mutate(
+    latitud_media_intervalo = mean(latitud)
+  ) %>%
+  ungroup()
+
+# Graficando las categorías de latitud en el mapa:
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = longitud, y = latitud, colour = cat_latitud_4)) +
+  geom_point()
+
+ggplot(data = df_trabajo_2010_variables_selectas,
+  aes(x = longitud, y = latitud, colour = cat_latitud_5)) +
+  geom_point()
+
+ggplot(data = df_trabajo_2010_variables_selectas, #%>%
+    #group_by(cat_latitud_10) %>%
+    # revolviendo los colores
+    #mutate(orden = sample(1:1000, 1)) %>%
+    #ungroup(),
+  aes(
+    x = longitud,
+    y = latitud,
+    colour = cat_latitud_10)) + #reorder(cat_latitud_10, orden))) +
+  geom_point()
+
+# Ahora, perfilando cobertura de acrópora por categorías de latitud.
+ggplot(data = df_plot_cat_latitud,
+  aes(x = reorder(intervalo, latitud_media_intervalo), y = cobertura_acropora)) +
+  geom_boxplot() +
+  facet_wrap(~cat_latitud, scales = "free") +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+  )
+# Con cat_latitud 10 se rompe la tendencia longitudinal, veamos ahora con las categorías
+# de cobertura de acrópora.
+
+ggplot(data = df_plot_cat_latitud,
+  aes(x = reorder(intervalo, latitud_media_intervalo), fill = cat_cobertura_acropora_4)) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  facet_wrap(~cat_latitud, scales = "free") +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+  )
+# La tendencia latitudinal se observa con más claridad para menos folds que para más folds.
+
+ggplot(data = df_plot_cat_latitud,
+  aes(x = reorder(intervalo, latitud_media_intervalo), fill = cat_cobertura_acropora_2)) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  facet_wrap(~cat_latitud, scales = "free") +
+  theme(axis.text.x = element_text(
+    size = 5,
+    angle = 90,
+    hjust = 1)
+  )
+# Se sigue observando la tendencia longitudinal, con el mismo patrón que el anterior.
+# Sin embargo, para 10 categorías, se rompe esta tendencia en los folds 5 y 9 principal
+# mente, es conveniente ver la predicción en estos, con el fin de evaluar si efectivamente
+# se eestán usando las variables satelitales per se para predicción, y no simplemente
+# como un proxy de la longitud.
+
+# Finalmente, perfilando variables ambientales por categoría de latitud:
+
 ```
 
 ```{r, warning=FALSE, message=FALSE}
@@ -1149,7 +1314,7 @@ ggplot(df_trabajo_2010_variables_selectas,
   )) +
   geom_point()
 
-# Tabla con número de puntos por categorñia de latitud y arrecife
+# Tabla con número de puntos por categoría de latitud y arrecife
 df_trabajo_2010_variables_selectas %>%
   group_by(cat_latitud_5, arrecife) %>%
   tally() %>%
@@ -1173,6 +1338,48 @@ df_trabajo_2010_variables_selectas %>%
 # Nuevamente se ve cómo Limones, que ahora corresponde a 3 folds, es el que "salva"
 # al modelo. La prominencia de Limones puede deberse a que tiene tantos puntos, que
 # ese "agregado" puede ser muy bien representado en el modelo de predicción.
+
+## 10 clases:
+cv_cat_latitud_10 <- validacion_cruzada_por_segmentos(
+  df_trabajo_2010_variables_selectas,
+  "cat_latitud_10",
+  formula_prediccion,
+  num_iteraciones)
+saveRDS(cv_cat_latitud_10, "../../productos/cv_cat_latitud_10.RData")
+
+cv_cat_latitud_10 <- readRDS("../../productos/cv_cat_latitud_10.RData")
+
+# Calculando la proporción de éxito de VC:
+exito_vc_cat_latitud_10 <- weighted.mean(cv_cat_latitud_10$exito_prediccion,
+  cv_cat_latitud_10$n) #0.519145
+
+# Calculando las proporciónes de éxito por iteración, para graficarlos al
+# final contra una simulación de un clasificador aleatorio
+exito_iteracion_cat_latitud_10 <- cv_cat_latitud_10 %>%
+  group_by(num_iteracion) %>%
+  summarise(
+    exito = weighted.mean(exito_prediccion, n)
+  )
+
+# Graficando las proporciones de exito por fold:
+ggplot(cv_cat_latitud_10,
+  aes(x = exito_prediccion, fill = segmento, group = segmento)) +
+  geom_histogram(position = "identity", alpha = 0.8)
+
+# Graficando los folds:
+ggplot(df_trabajo_2010_variables_selectas,
+  aes(
+    x = longitud,
+    y = latitud,
+    colour = cat_latitud_10
+  )) +
+  geom_point()
+
+# Tabla con número de puntos por categorñia de latitud y arrecife
+df_trabajo_2010_variables_selectas %>%
+  group_by(cat_latitud_10, arrecife) %>%
+  tally() %>%
+  arrange(cat_latitud_10, arrecife)
 ```
 
 ```{r, warning=FALSE, message=FALSE}
@@ -1318,8 +1525,44 @@ Pasos futuros a considerar:
  - Hacer un análisis a nivel de parche, par tener mayor libertad de variables a elegir
  (cuantiles de las variables de percepción remota), así como para minimizar el efecto
  del error de GPS.
+ - Existe error de GPS: la pocisión muestreada no empata siempre con la registrada
+ exactamente, por ello, mediante VC se podría elegir el radio óptimo del buffer
+ que optimice dos fuerzas opuestas: exactitud (que el buffer contenga en buena
+ medida el sitio verdadero), y precisión (que el buffer sea lo más pequeño posible).
+ - Se podría entrenar el RandomForest dividiendo los sitios en estratos espaciales
+ y tomando una muestra de cada estrato, con el fin de mejorar la extrapolación
+ espacial del modelo, al disminuir autocorrelación espacial (notar que muy probablemente
+ se está sobreajustando el modelo, y aunque aún así se valida que funciona mejor
+ que elección al azar para predicciones fuera del rango espacial de entrenamiento,
+ se espera una notable mejora en el poder predictivo al ejercer esta correcció
+ n).
+ Se podría escoger una buena estratificación mediante validación cruzada.
+ 
 
 Sergio:
 1. Me ofrece los viáticos del Mau.
 2. Por experiencia del Mau, me va a estar fregando por eso para siempre. Es un anzuelo.
 3. Mejor le digo a Lorenzo que si me consigue para el avión y lo que sea para la comida ya la armamos.
+
+cv_cat_latitud_4 <- validacion_cruzada_por_segmentos(
+  df_trabajo_2010_variables_selectas,
+  "cat_latitud_4",
+  formula_prediccion,
+  num_iteraciones)
+cv_cat_latitud_5 <- validacion_cruzada_por_segmentos(
+  df_trabajo_2010_variables_selectas,
+  "cat_latitud_5",
+  formula_prediccion,
+  num_iteraciones)
+cv_cat_latitud_10 <- validacion_cruzada_por_segmentos(
+  df_trabajo_2010_variables_selectas,
+  "cat_latitud_10",
+  formula_prediccion,
+  num_iteraciones)
+saveRDS(cv_cat_latitud_4, "../../productos/cv_cat_latitud_4.RData")
+saveRDS(cv_cat_latitud_5, "../../productos/cv_cat_latitud_5.RData")
+saveRDS(cv_cat_latitud_10, "../../productos/cv_cat_latitud_10.RData")
+
+
+
+
