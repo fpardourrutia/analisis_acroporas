@@ -7,11 +7,11 @@ output: html_document
 
 ##Panorama General
 
-+ Se seleccionaron los parches donde es factible encontrar colonias de _Acropora sp._ por medio de variables de PR (batimetría, etc). Por lo tanto, se espera que
-las variables ambientales observadas en este estudio estén restringidas en cuanto
-a su rango real.
++ Se realizó un estudio previo mediante SIG para identificar las áreas donde es
+factible encontrar poblaciones de A. palmata.
 
-+ Luego se exploraron dichos parches, y se seleccionaron los que en realidad tiene cubierta de acrópora para ser muestreados. Éstos se digitalizaron.
++ Luego se exploraron dichas áreas, y se seleccionaron los parches que en
+realidad tienen cobertura de acrópora para ser muestreados. Éstos se digitalizaron.
 
 + Utilizando la digitalización de los parches, se obtuvo una muestra aleatoria de
 sitios a visitar. La cantidad de sitios (r = 2m) en cada parche se seleccionó de
@@ -34,7 +34,7 @@ geográficas aproximadas.
 
 1. Sacar un búfer (ó ventana, más natural para rasters) de 5m (o 3px, experiencia
 de Mau) alrededor de cada punto del GPS, obtenemos los pixeles en la intersección
-de ese búfer con algún parche, y sacamos la mediana. Notar que automáticamente se excluyen los puntos donde el búfer no intersecta ningún parche. 
+de ese búfer con algún parche, y sacamos agregados de cada variable.
 
 2. Se elige la mediana porque es más robusta ante atípicos que la media, pero para
 saber esto con precisión, conviene hacer una simulación: círculos con radio 1m
@@ -62,19 +62,6 @@ las variables ambientales que se van a asignar al pixel.
 
 Desventaja: como el búfer es pequeño, podría no haber intersección entre los puntos
 muestreados realmente y los del GPS (con errores).
-
-## Cuarta idea:
-
-1. Si una variable predice bien la distribución de Acrópora palmata, utilizando
-un modelo usual, no podemos descartar que se deba a autocorrelación espacial.
-
-2. 
-
-## Tareas:
-
-1. Mau: hacer las ventanas.
-
-2. Fer: empezar el exploratorio.
 
 ```{r, message = FALSE}
 library("raster")
@@ -106,7 +93,6 @@ library("randomForest")
 library("doMC")
 # Registrando número de núcleos
 registerDoMC(4)
-
 
 # Declarando la función para realizar la validación cruzada por segmentos
 # df: un data frame con la información de las variables de entrada, la
@@ -219,6 +205,9 @@ validacion_cruzada_por_segmentos <- function(df, nombre_variable_segmentacion, f
   
 ```
 
+Homologando coordenadas y projecciones de todos los rasters para crear un brick
+de insumos:
+
 ```{r, warning=FALSE, message=FALSE}
 
 # ../ es para regresarse una carpeta del working directory.
@@ -303,13 +292,17 @@ names(brick_insumos) <- names_brick_insumos
 quartz()
 plot(brick_insumos)
 
-# Utilizar la intersección para homologar la imágenes del 2010 con la del 2011 sería un problema de regresión:
-# Si A es una matriz de pixeles por bandas (n x 4) para el 2010 y B lo mismo para el 2011, lo que se tendría
-# que hacer es encontrar una matriz C (4x$) tal que A + AC = B, o AC = B-A, ésto es un problema de regresión.
+# Utilizar la intersección para homologar la imágenes del 2010 con la del 2011
+# sería un problema de regresión:
+# Si A es una matriz de pixeles por bandas (n x 4) para el 2010 y B lo mismo para
+# el 2011, lo que se tendría que hacer es encontrar una matriz C (4x$) tal que
+# A + AC = B, o AC = B-A, ésto es un problema de regresión.
 ```
 
-```{r, warning=FALSE, message=FALSE}
+Obteniendo shapes de trabajo (buffers de 5m alrededor de cada punto del GPS) y
+shape de parches corregidos por Mau.
 
+```{r, warning=FALSE, message=FALSE}
 # Shape con buffers alrededor de cada punto del GPS, correspondientes a un sitio
 # estimado de muestreo de acróporas.
 sitios_estimados_acropora_sf <- readOGR(dsn = paste0(dir_datos, "2014_sitios_estimados_acropora"))
@@ -319,6 +312,8 @@ plot(sitios_estimados_acropora_sf[1:10,])
 parches_acropora_ajustados_sh <- readOGR(dsn = paste0(dir_datos, "2014_parches_acropora_ajustados"))
 #plot(parches_acropora_ajustados_sh[1:5,])
 ```
+
+Intersectando ambos shapes:
 
 ```{r, warning=FALSE, message=FALSE}
 # Obteniendo la intersección de ambos shapefiles.
@@ -348,6 +343,10 @@ plot(parches_acropora_ajustados_sh, add = TRUE)
 # reextraer de los buffers, porque se evita el problema combinatorio de parches
 # vs buffers.
 ```
+
+Extrayendo de cada punto las variables correspondientes a los pixeles en cada
+elemento en el shape de buffers intersección shape de parches corregidos, y
+formando un data frame con ellas.
 
 ```{r, warning=FALSE, message=FALSE}
 # # Extrayendo del brick las variables correspondientes cada elemento en el shape
@@ -416,6 +415,14 @@ nrow(df_pixeles_desglosados)
 # Perfecto
 ```
 
+Calculando, para cada elemento en el shape de intersecciones, los agregados
+(medias, medianas, desviaciones estándar) de cada una de las variables de
+percepción remota (PR). Julián sugiere que para polígonos más grandes, se podrían
+incluso utilizar cuantiles. Con ello, formar el data frame de trabajo.
+
+Por el momento se excluyeron del análisis los puntos
+que requieren de las imágenes satelitales del 2011, ya que son muy pocos (45 de
+925), y requerirían un amplio procesamiento para integrarlos en este análisis.
 ```{r, warning=FALSE, message=FALSE}
 # Creando el DF de trabajo para el 2010
 # df_trabajo_2010 <- df_pixeles_desglosados %>%
@@ -628,6 +635,8 @@ df_pixeles_desglosados %>%
 # # perfecto! Se puede comenzar con los análisis
 ```
 
+Seleccionando del df de trabajo variables de interés, con ayuda de un mapa de
+calor de las correlaciones entre las variables.
 ```{r, warning=FALSE, message=FALSE}
 
 # Calculando la correlación entre las variables de interés
@@ -725,7 +734,9 @@ df_trabajo_2010_variables_selectas <- df_trabajo_2010 %>%
   ) %>%
   filter(complete.cases(.))
 ```
-  
+
+Análisis exploratiorio de datos:
+
 ```{r, warning=FALSE, message=FALSE}
 # Análisis exploratorio
 
@@ -944,6 +955,10 @@ ggplot(data = df_plot_cat_latitud,
 
 ```
 
+Intentos fallidos de clustering para tratar de ver si las unidades de muestreo
+de acrópora (interesección) tiene distintas características en las variables de PR
+de acuerdo a su localización geográfica, para ver si la VC no es injusta espacialmente.
+
 ```{r, warning=FALSE, message=FALSE}
 # Clustering de variables ambientales, para ver si una validación cruzada espacial
 # puede ser "injusta" con el modelo en ciertos folds (al no darle los insumos
@@ -1024,6 +1039,9 @@ ggplot(data = df_plot_cat_latitud,
 # # T-SNE no me sirve porque quiero distinguir entre si un arrecife está lejos
 # # de otros, no cerca.
 ```
+
+Ajuste preeliminar de modelos predictivos, ésto se hace sólo desde el punto de vista
+exploratorio, pues no se está controlando por autocorrelación espacial.
 
 ```{r, warning=FALSE, message=FALSE}
 # Ajuste de primeros modelos predictivos:
@@ -1168,6 +1186,16 @@ varImpPlot(rf_3_clasificacion_2)
 # Tasa de éxito ~62.5%. Nos quedamos con esas variables, por ahora.
 ```
 
+Ahora sí, ajustando y probando los modelos mediante validación cruzada espacial
+k = 4, 5, 10 (número de folds)
+
+Obteniendo proporciones de éxito tanto a nivel de fold (segmento del espacio),
+para analizar la situación particular de cada segmento espacial estudiado, como
+a nivel de iteración, para comparar con un modelo de etiquetado al azar.
+
+Se calculan también ayudas visuales como la tabla de número de puntos de cada
+arrecife por fold, y mapas de los folds y arrecifes.
+
 ```{r, warning=FALSE, message=FALSE}
 ## Validación cruzada espacial
 
@@ -1196,7 +1224,8 @@ varImpPlot(rf_3_clasificacion_2)
 # corrige autocorrelación espacial. Si así es, se espera que la densidad del
 # error en cada fold espacial sea parecida.
 
-# Si un fold resulta muy bien predicho, y esto coincide con un fold al que pertenecen no todos los datos de un arrecife, hay algo raro.
+# Si un fold resulta muy bien predicho, y esto coincide con un fold al que
+# pertenecen no todos los datos de un arrecife, hay algo raro.
 
 # Esto NO es cierto, lo que estas modas pueden indicar es la presencia de agregados
 # (arrecifes u otro nivel), cuyas cobertura de acrópora palmata sigue patrones
@@ -1385,6 +1414,9 @@ df_trabajo_2010_variables_selectas %>%
 # la técnica de predicción por estratos parece promisoria y merecedora de estudios futuros.
 ```
 
+Graficando éxito de predicción de 4/5/10-validación cruzada espacial contra un
+modelo de predicción al azar.
+
 ```{r, warning=FALSE, message=FALSE}
 # Prueba rápida con un modelo al azar:
 # nrow(df_trabajo_2010_variables_selectas) # 876
@@ -1495,6 +1527,8 @@ p_value_cat_latitud_10 <- simulacion_error_azar %>%
   '$'(., p_value)
 ```
 
+Revisando la importancia de variables de acuerdo a la validación cruzada 5-folds
+
 ```{r, warning=FALSE, message=FALSE}
 # cv_k_folds_cat_latitud_5_importancia_variables <- parsperrorest(
 #   formula,
@@ -1586,5 +1620,3 @@ Sergio:
 1. Me ofrece los viáticos del Mau.
 2. Por experiencia del Mau, me va a estar fregando por eso para siempre. Es un anzuelo.
 3. Mejor le digo a Lorenzo que si me consigue para el avión y lo que sea para la comida ya la armamos.
-
-
