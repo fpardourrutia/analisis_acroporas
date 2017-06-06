@@ -80,6 +80,10 @@ library("ggplot2")
 library("purrr")
 library("stringi")
 
+# Para poner varios plots en un mismo recuadro, usando "plot_grid", y
+# conservando colores de los factores
+#library("cowplot")
+
 # Para calcular medianas ponderadas
 library("matrixStats")
 
@@ -93,6 +97,9 @@ library("randomForest")
 library("doMC")
 # Registrando número de núcleos
 registerDoMC(4)
+
+# Para calcular importancia de variables, que al final no da tiempo de programar
+library("sperrorest")
 
 # Declarando la función para realizar la validación cruzada por segmentos
 # df: un data frame con la información de las variables de entrada, la
@@ -877,7 +884,6 @@ ggplot(data = df_plot_2010, aes(x = cat_cobertura_acropora_4, y = valor)) +
   facet_wrap(~llave, scales = "free", ncol = 2)
 # Se ven tendencias en "latitud", "longitud" y "aspecto_media_ponderada"
 
-
 df_plot_cat_latitud <- df_trabajo_2010_variables_selectas %>%
   mutate(
     cat_latitud_4 = as.character(cat_latitud_4),
@@ -952,7 +958,18 @@ ggplot(data = df_plot_cat_latitud,
 # como un proxy de la longitud.
 
 # Finalmente, perfilando variables ambientales por categoría de latitud:
-
+ggplot(data = df_plot_2010,
+  aes(x = cat_latitud_4, y = valor)) +
+  geom_boxplot() + 
+  facet_wrap(~llave, scales = "free")
+ggplot(data = df_plot_2010,
+  aes(x = cat_latitud_5, y = valor)) +
+  geom_boxplot() + 
+  facet_wrap(~llave, scales = "free")
+ggplot(data = df_plot_2010,
+  aes(x = cat_latitud_10, y = valor)) +
+  geom_boxplot() + 
+  facet_wrap(~llave, scales = "free")
 ```
 
 Intentos fallidos de clustering para tratar de ver si las unidades de muestreo
@@ -1307,14 +1324,6 @@ cv_cat_latitud_10 <- readRDS("../../productos/cv_cat_latitud_10.RData") %>%
       relevel("[20.855,20.869]")
   )
 
-# Calculando la proporción de éxito de VC:
-exito_vc_cat_latitud_4 <- weighted.mean(cv_cat_latitud_4$exito_prediccion,
-  cv_cat_latitud_4$n) #0.5193142
-exito_vc_cat_latitud_5 <- weighted.mean(cv_cat_latitud_5$exito_prediccion,
-  cv_cat_latitud_5$n) #0.5488043
-exito_vc_cat_latitud_10 <- weighted.mean(cv_cat_latitud_10$exito_prediccion,
-  cv_cat_latitud_10$n) #0.576338
-
 # Graficando las proporciones de exito por fold:
 ggplot(cv_cat_latitud_4,
   aes(x = exito_prediccion, fill = segmento, group = segmento)) +
@@ -1349,27 +1358,47 @@ ggplot(data = df_trabajo_2010_variables_selectas,
   geom_point()
 
 # Graficando los folds:
-ggplot(df_trabajo_2010_variables_selectas,
+
+cat_latitud_4_folds_plot <- ggplot(df_trabajo_2010_variables_selectas,
   aes(
     x = longitud,
     y = latitud,
     colour = cat_latitud_4
   )) +
-  geom_point()
-ggplot(df_trabajo_2010_variables_selectas,
+  geom_point() +
+  labs(title = "4-Validación Cruzada", colour = "Segmento") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold")
+  )
+
+cat_latitud_5_folds_plot <- ggplot(df_trabajo_2010_variables_selectas,
   aes(
     x = longitud,
     y = latitud,
     colour = cat_latitud_5
   )) +
-  geom_point()
-ggplot(df_trabajo_2010_variables_selectas,
+  geom_point() +
+  labs(title = "5-Validación Cruzada", colour = "Segmento") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold")
+  )
+
+cat_latitud_10_folds_plot <- ggplot(df_trabajo_2010_variables_selectas,
   aes(
     x = longitud,
     y = latitud,
     colour = cat_latitud_10
   )) +
-  geom_point()
+  geom_point() +
+  labs(title = "10-Validación Cruzada", colour = "Segmento") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold")
+  )
+
+# plot_grid(cat_latitud_4_folds_plot,
+#   cat_latitud_5_folds_plot,
+#   cat_latitud_10_folds_plot,
+#   ncol = 3, nrow = 1)
 
 # Tabla con número de puntos por categoría de latitud y arrecife
 df_trabajo_2010_variables_selectas %>%
@@ -1418,6 +1447,64 @@ Graficando éxito de predicción de 4/5/10-validación cruzada espacial contra u
 modelo de predicción al azar.
 
 ```{r, warning=FALSE, message=FALSE}
+# Calculando las proporciones de éxito por iteración, para graficarlas 
+# contra una simulación de un clasificador aleatorio
+exito_iteracion_numero_folds <- cv_cat_latitud_4 %>%
+  group_by(num_iteracion) %>%
+  summarise(
+    exito = weighted.mean(exito_prediccion, n)
+  ) %>%
+  transmute(
+    i = num_iteracion,
+    porcentaje_exito = exito,
+    tipo = "RF variables satelitales 4-fold CV"
+  ) %>%
+  union(
+    cv_cat_latitud_5 %>%
+      group_by(num_iteracion) %>%
+      summarise(
+        exito = weighted.mean(exito_prediccion, n)
+      ) %>%
+      transmute(
+        i = num_iteracion,
+        porcentaje_exito = exito,
+        tipo = "RF variables satelitales 5-fold CV"
+      )
+  ) %>%
+  union(
+    cv_cat_latitud_10 %>%
+      group_by(num_iteracion) %>%
+      summarise(
+        exito = weighted.mean(exito_prediccion, n)
+      ) %>%
+      transmute(
+        i = num_iteracion,
+        porcentaje_exito = exito,
+        tipo = "RF variables satelitales 10-fold CV"
+      )
+  ) %>%
+  # quiero tener los factores para la tabla de p-values
+  mutate(
+    tipo = factor(tipo, levels = c(
+      "RF variables satelitales 4-fold CV",
+      "RF variables satelitales 5-fold CV",
+      "RF variables satelitales 10-fold CV"
+    ))
+  ) %>%
+  select(
+    tipo,
+    i,
+    porcentaje_exito
+  ) %>%
+  arrange(tipo, i)
+
+# Calculando las medias de éxito de iteración por número de folds:
+medias_exito_iteracion_numero_folds <- exito_iteracion_numero_folds %>%
+  group_by(tipo) %>%
+  summarise(
+    porcentaje_exito_promedio = mean(porcentaje_exito)
+  )
+
 # Prueba rápida con un modelo al azar:
 # nrow(df_trabajo_2010_variables_selectas) # 876
 # Simulemos la distribución del ECM al correr 1000 simulaciones de un etiquetado
@@ -1426,24 +1513,6 @@ modelo de predicción al azar.
 # hay la misma cantidad de registros con en cada categoría (por lo que no se puede,
 # usar la moda, a diferencia si, por ejemplo, una categoría tuviera 90 registros y
 # otra 10.
-
-# Calculando las proporciónes de éxito por iteración, para graficarlas 
-# contra una simulación de un clasificador aleatorio
-exito_iteracion_cat_latitud_4 <- cv_cat_latitud_4 %>%
-  group_by(num_iteracion) %>%
-  summarise(
-    exito = weighted.mean(exito_prediccion, n)
-  )
-exito_iteracion_cat_latitud_5 <- cv_cat_latitud_5 %>%
-  group_by(num_iteracion) %>%
-  summarise(
-    exito = weighted.mean(exito_prediccion, n)
-  )
-exito_iteracion_cat_latitud_10 <- cv_cat_latitud_10 %>%
-  group_by(num_iteracion) %>%
-  summarise(
-    exito = weighted.mean(exito_prediccion, n)
-  )
 
 simulacion_error_azar <- ldply(1:10000, function(i){
   # TRUE: bien clasificado, FALSE: mal clasificado.
@@ -1469,34 +1538,35 @@ plot_distribuciones_aleatorio_rf <- simulacion_error_azar %>%
     tipo = "Clasificación al azar"
   ) %>%
   union(
-    exito_iteracion_cat_latitud_4 %>%
-      transmute(
-        i = num_iteracion,
-        porcentaje_exito = exito,
-        tipo = "RF variables satelitales 4-fold CV"
+    exito_iteracion_numero_folds %>%
+      mutate(
+        tipo = as.character(tipo)
       )
   ) %>%
-  union(
-    exito_iteracion_cat_latitud_5 %>%
-      transmute(
-        i = num_iteracion,
-        porcentaje_exito = exito,
-        tipo = "RF variables satelitales 5-fold CV"
-      )
-    ) %>%
-    union(
-    exito_iteracion_cat_latitud_10 %>%
-      transmute(
-        i = num_iteracion,
-        porcentaje_exito = exito,
-        tipo = "RF variables satelitales 10-fold CV"
-      )
-    )
-
+  mutate(
+    tipo = factor(tipo, levels = c(
+      "Clasificación al azar",
+      "RF variables satelitales 4-fold CV",
+      "RF variables satelitales 5-fold CV",
+      "RF variables satelitales 10-fold CV"
+    ))
+  )
 
 ggplot(plot_distribuciones_aleatorio_rf,
   aes(x = porcentaje_exito, fill = tipo, group = tipo)) +
-  geom_histogram(position="identity", alpha = 0.6)
+  geom_histogram(position="identity", alpha = 0.7) +
+  geom_vline(
+    xintercept = medias_exito_iteracion_numero_folds$porcentaje_exito_promedio,
+    linetype = "dotted") +
+  geom_vline(
+    xintercept = 0.5,
+    linetype = "dotted") +
+  xlab("porcentaje de éxito") +
+  ylab("n") +
+  ggtitle("Histogramas de éxito de predicción") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold")
+  )
 
 ggplot(plot_distribuciones_aleatorio_rf,
   aes(x = tipo, y = porcentaje_exito)) +
@@ -1504,27 +1574,28 @@ ggplot(plot_distribuciones_aleatorio_rf,
 
 # Calculando p-values de la media de cada distribución
 # con respecto a "Clasificación al azar"
-#percentil_5_cat_latitud_5 <- quantile(exito_iteracion_cat_latitud_5$exito, probs = 0.05)
-p_value_cat_latitud_4 <- simulacion_error_azar %>%
-  filter_(paste0("porcentaje_exito >= ", mean(exito_iteracion_cat_latitud_4$exito))) %>%
-  summarise(
-    p_value = n()/nrow(simulacion_error_azar)
-  ) %>%
-  '$'(., p_value)
 
-p_value_cat_latitud_5 <- simulacion_error_azar %>%
-  filter_(paste0("porcentaje_exito >= ", mean(exito_iteracion_cat_latitud_5$exito))) %>%
+ddply(medias_exito_iteracion_numero_folds, .(tipo), function(x, simulacion_error_azar){
+  p_value <- simulacion_error_azar %>%
+  filter_(paste0("porcentaje_exito >= ", x$porcentaje_exito_promedio)) %>%
   summarise(
     p_value = n()/nrow(simulacion_error_azar)
   ) %>%
   '$'(., p_value)
-
-p_value_cat_latitud_10 <- simulacion_error_azar %>%
-  filter_(paste0("porcentaje_exito >= ", mean(exito_iteracion_cat_latitud_10$exito))) %>%
-  summarise(
-    p_value = n()/nrow(simulacion_error_azar)
+  
+  resultado <- data_frame(
+    tipo = x$tipo,
+    media = x$porcentaje_exito_promedio,
+    p_value = p_value
+  )
+}, simulacion_error_azar) %>%
+  mutate(
+    tipo = ifelse(tipo == "RF variables satelitales 4-fold CV", "VC 4 segmentos",
+      ifelse(tipo == "RF variables satelitales 5-fold CV", "VC 5 segmentos",
+        "VC 10 segmentos")
+    )
   ) %>%
-  '$'(., p_value)
+  View()
 ```
 
 Revisando la importancia de variables de acuerdo a la validación cruzada 5-folds
@@ -1568,9 +1639,10 @@ summary(cv_k_folds_cat_latitud_5_importancia_variables$importance) %>%
   ) %>%
   arrange(desc(mean.error)) %>%
   select(
-    variables,
-    mean.error
-  )
+    variable = variables,
+    incremento_error_promedio =mean.error
+  ) %>%
+  View()
 ```
 
 Conclusiones:
@@ -1607,16 +1679,3 @@ Pasos futuros a considerar:
  se espera una notable mejora en el poder predictivo al ejercer esta correcció
  n).
  Se podría escoger una buena estratificación mediante validación cruzada.
- 
-Presentación:
-1. Método
-2. Histogramas de éxito de predicción vs error aleatorio.
-3. Presentación del análisis por fold, conclusiones sobre estratificación y nos
-quedamos con el mejor modelo 5-fold, descartando 4 fold por variables ambientales
-en Limones.
-4. Presentación de p-value e importancia de variables.
-
-Sergio:
-1. Me ofrece los viáticos del Mau.
-2. Por experiencia del Mau, me va a estar fregando por eso para siempre. Es un anzuelo.
-3. Mejor le digo a Lorenzo que si me consigue para el avión y lo que sea para la comida ya la armamos.
