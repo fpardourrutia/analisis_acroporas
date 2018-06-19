@@ -1598,7 +1598,12 @@ ddply(medias_exito_iteracion_numero_folds, .(tipo), function(x, simulacion_error
   View()
 ```
 
-Revisando la importancia de variables de acuerdo a la validación cruzada 5-folds
+Revisando la importancia de variables de acuerdo a la validación cruzada 5-folds.
+4-folds: a menor poder predictivo, más ruido en variables importantes.
+10-folds: el efecto de autocorrelación espacial (en la variable de salida) podría
+sesgar la importancia de ciertas variables.
+Un buen tradeoff por lo pronto es usar k=5, una elección más cuidadosa involucraría
+el uso de un correlograma.
 
 ```{r, warning=FALSE, message=FALSE}
 # cv_k_folds_cat_latitud_5_importancia_variables <- parsperrorest(
@@ -1610,7 +1615,7 @@ Revisando la importancia de variables de acuerdo a la validación cruzada 5-fold
 #   smp.fun = partition.factor.cv,
 #   smp.args = list(
 #     fac = "cat_latitud_5",
-#     repetition = 1:4,
+#     repetition = 1:200,
 #     nfold = 5,
 #     seed1 = 123),
 #   par.args = list(
@@ -1638,9 +1643,9 @@ summary(cv_k_folds_cat_latitud_5_importancia_variables$importance) %>%
     everything()
   ) %>%
   arrange(desc(mean.error)) %>%
-  select(
+  transmute(
     variable = variables,
-    incremento_error_promedio =mean.error
+    incremento_error_promedio = round(mean.error, 4)
   ) %>%
   View()
 ```
